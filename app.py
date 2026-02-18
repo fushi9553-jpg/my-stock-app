@@ -21,8 +21,36 @@ st.markdown("""
 
 # --- 2. データ読み込み ---
 conn = st.connection("gsheets", type=GSheetsConnection)
-# キャッシュを無効化して常に最新を取得
 df = conn.read(worksheet="trades", ttl=0)
+
+# ==========================================
+# 🛠️ データ洗浄（亡霊退治）コーナー
+# ==========================================
+if not df.empty:
+    # 1. 文字型に変換
+    df['ticker'] = df['ticker'].astype(str)
+    df['type'] = df['type'].astype(str)
+    
+    # 2. 全角を半角に、前後の空白を削除（例: "４００５ " -> "4005"）
+    # (unicodedataを使って正規化する処理を入れるのがベストですが、簡易的に空白削除と大文字化を行います)
+    df['ticker'] = df['ticker'].str.strip().str.upper() # 小文字も大文字に
+    df['type'] = df['type'].str.strip().str.upper()     # "in " -> "IN"
+
+    # 3. 日付の強力な変換
+    # どんな形式でもエラーを出さず、変換できない行は削除
+    try:
+        df['date'] = pd.to_datetime(df['date'].astype(str), format='mixed', errors='coerce')
+    except:
+        df['date'] = pd.to_datetime(df['date'].astype(str), errors='coerce')
+    
+    df = df.dropna(subset=['date'])
+
+    # 4. 【超重要】並び替えのルール変更
+    # 日付順 -> その中で「IN」が「OUT」より先に来るようにする
+    # (アルファベット順だと 'I'N は 'O'UT より先なので、typeでもソートすれば解決！)
+    df = df.sort_values(by=['date', 'type'], ascending=[True, True])
+
+# ==========================================
 
 # --- 3. 計算ロジック ---
 def process_data(data):
@@ -32,23 +60,8 @@ def process_data(data):
     if data.empty:
         return {}, [], {"win_rate": 0, "ev": 0, "total_pl": 0, "count": 0}
     
-    # 【重要】エラー対策：日付変換の強化
-    # 1. 強制的に文字型にする
-    # 2. errors='coerce' で変換できないゴミデータは NaT (空) にする
-    # 3. format='mixed' でスラッシュ/ハイフン混在を許容する
-    try:
-        data['date'] = pd.to_datetime(data['date'].astype(str), format='mixed', errors='coerce')
-    except:
-        # 万が一 format='mixed' が使えない古いPandas環境用の予備策
-        data['date'] = pd.to_datetime(data['date'].astype(str), errors='coerce')
-
-    # 日付が無効になった行を削除
-    data = data.dropna(subset=['date'])
-    data = data.sort_values('date')
-    
     for _, row in data.iterrows():
         t = row['ticker']
-        # 銘柄名確保
         n = row['name'] if 'name' in row and pd.notna(row['name']) else t
         
         if t not in holdings: 
@@ -61,22 +74,32 @@ def process_data(data):
         if row['type'] == "IN":
             holdings[t]['qty'] += row['qty']
             holdings[t]['total_cost'] += row['price'] * row['qty']
-        elif row['type'] == "OUT":
-            if holdings[t]['qty'] > 0:
-                avg_price = holdings[t]['total_cost'] / holdings[t]['qty']
-                p_l = (row['price'] - avg_price) * row['qty']
-                
-                history.append({
-                    "ticker": t, "name": holdings[t]["name"],
-                    "pl": p_l, "date": row['date'], 
-                    "price": row['price'], "type": "OUT"
-                })
-                
-                holdings[t]['qty'] -= row['qty']
-                holdings[t]['total_cost'] -= avg_price * row['qty']
             
-    # 保有中のみ抽出
-    active_holdings = {k: v for k, v in holdings.items() if v['qty'] > 0}
+        elif row['type'] == "OUT":
+            # 【変更】在庫がなくても強制的に引き算してみる（エラー発見用）
+            # もしこれで保有数がマイナスになったら、OUTが多すぎるかINの日付間違い
+            
+            # 平均単価の計算（在庫がある時のみ）
+            current_avg = 0
+            if holdings[t]['qty'] > 0:
+                current_avg = holdings[t]['total_cost'] / holdings[t]['qty']
+            
+            p_l = (row['price'] - current_avg) * row['qty']
+            
+            history.append({
+                "ticker": t, "name": holdings[t]["name"],
+                "pl": p_l, "date": row['date'], 
+                "price": row['price'], "type": "OUT"
+            })
+            
+            holdings[t]['qty'] -= row['qty']
+            if holdings[t]['qty'] > 0:
+                holdings[t]['total_cost'] -= current_avg * row['qty']
+            else:
+                holdings[t]['total_cost'] = 0 # 売り切ったらコストリセット
+            
+    # 保有中のみ抽出（数量が0.01以上のものだけ。マイナスも表示しない）
+    active_holdings = {k: v for k, v in holdings.items() if v['qty'] > 0.001}
     
     # 全体統計
     total_pl = sum([h['pl'] for h in history])
@@ -311,3 +334,4 @@ with tab4:
             return [''] * len(row)
 
         st.dataframe(show_df.style.apply(highlight_active, axis=1), use_container_width=True)
+
