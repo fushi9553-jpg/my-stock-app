@@ -22,46 +22,33 @@ st.markdown("""
 conn = st.connection("gsheets", type=GSheetsConnection)
 df = conn.read(worksheet="trades", ttl=0)
 
-# --- 3. 計算ロジック（エラー対策・亡霊退治済み） ---
+# --- 3. 計算ロジック ---
 def process_data(data):
     holdings = {}
     history = []
     
-    # データが空なら即終了
     if data.empty:
         return {}, [], {"win_rate": 0, "ev": 0, "total_pl": 0, "count": 0}
     
-    # === エラー対策: 日付変換 ===
-    # ここがエラーの原因だった場所です。try-exceptとcoerceで強制的に突破します。
+    # 日付エラー対策
     try:
-        # 強制的に文字列にしてから変換。エラーがある箇所はNaT(空)にする
         data['date'] = pd.to_datetime(data['date'].astype(str), errors='coerce')
     except Exception:
-        # 何があっても空のデータを返してアプリを落とさない
         return {}, [], {"win_rate": 0, "ev": 0, "total_pl": 0, "count": 0}
 
-    # 日付変換に失敗した行（NaT）は削除して無視する
     data = data.dropna(subset=['date'])
-    
-    # === 亡霊退治: 強制並び替え ===
-    # 日付順、かつ同じ日なら「IN」→「OUT」の順に並べる
     data = data.sort_values(by=['date', 'type'], ascending=[True, True])
     
     for _, row in data.iterrows():
-        # 銘柄コードを文字列化して空白削除
         t = str(row['ticker']).strip()
-        
-        # 名前確保
         n = row['name'] if 'name' in row and pd.notna(row['name']) else t
         
         if t not in holdings: 
             holdings[t] = {"qty": 0, "total_cost": 0, "name": n}
         
-        # 名前更新
         if 'name' in row and pd.notna(row['name']):
             holdings[t]["name"] = row['name']
         
-        # 売買ロジック（型変換を確実に行う）
         type_str = str(row['type']).strip().upper()
         
         if type_str == "IN":
@@ -82,10 +69,8 @@ def process_data(data):
                 holdings[t]['qty'] -= row['qty']
                 holdings[t]['total_cost'] -= current_avg * row['qty']
 
-    # 保有中のみ抽出（誤差対策で0.001以上）
     active_holdings = {k: v for k, v in holdings.items() if v['qty'] > 0.001}
     
-    # 全体統計
     total_pl = sum([h['pl'] for h in history])
     trade_count = len(history)
     wins = len([h for h in history if h['pl'] > 0])
@@ -101,6 +86,25 @@ def process_data(data):
 
 # 処理実行
 active_holdings, history_data, global_stats = process_data(df)
+
+# ★ここを追加：株価取得の専用関数（しぶとく取りに行く）
+@st.cache_data(ttl=600) # 10分間はデータを記憶して高速化
+def get_stock_price(ticker):
+    try:
+        # 作戦A: yf.Tickerを使う
+        stock = yf.Ticker(ticker)
+        hist = stock.history(period="1d")
+        if not hist.empty:
+            return hist['Close'].iloc[-1]
+        
+        # 作戦B: yf.downloadを使う（Aがダメならこっち）
+        data = yf.download(ticker, period="1d", progress=False)
+        if not data.empty:
+            return data['Close'].iloc[-1]
+            
+        return None # どうしてもダメならNoneを返す
+    except:
+        return None
 
 # --- 4. サイドバー ---
 with st.sidebar:
@@ -138,14 +142,14 @@ with tab1:
     else:
         total_unrealized = 0
         for ticker, info in active_holdings.items():
-            try:
-                stock = yf.Ticker(ticker).history(period="1d")
-                if not stock.empty:
-                    current_p = stock['Close'].iloc[-1]
-                else:
-                    current_p = info['total_cost'] / info['qty']
-            except:
+            # 強力版の関数で現在値を取得
+            current_p = get_stock_price(ticker)
+            
+            # もし取得に失敗したら、買値（平均単価）を仮に入れる
+            is_error = False
+            if current_p is None:
                 current_p = info['total_cost'] / info['qty']
+                is_error = True
 
             avg_p = info['total_cost'] / info['qty']
             u_pl = (current_p - avg_p) * info['qty']
@@ -154,6 +158,11 @@ with tab1:
             disp_name = info['name'] if info['name'] else ticker
             p_color = '#ff4b4b' if u_pl > 0 else '#00d1ff'
             
+            # エラー時は「取得失敗」と表示する
+            price_display = f"{current_p:,.0f}円"
+            if is_error:
+                price_display += " (取得失敗:買値表示)"
+
             st.markdown(f"""
             <div class="stock-card">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -174,7 +183,7 @@ with tab1:
                 <div style="display: flex; justify-content: space-between; font-size: 14px; color: #ecf0f1;">
                     <span>保有: {info['qty']:,}</span>
                     <span>平均: {avg_p:,.0f}</span>
-                    <span>現在: {current_p:,.0f}</span>
+                    <span>現在: {price_display}</span>
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -196,9 +205,7 @@ with tab3:
     st.title("銘柄別詳細")
     if not df.empty:
         df['disp_label'] = df['ticker'].astype(str) + " : " + df['name'].fillna('')
-        unique_options = {}
-        for idx, row in df.iterrows():
-            unique_options[str(row['ticker'])] = row['disp_label']
+        unique_options = {str(r['ticker']): r['disp_label'] for _, r in df.iterrows()}
         
         selected_label = st.selectbox("銘柄を選択", list(unique_options.values()))
         if selected_label:
@@ -240,7 +247,6 @@ with tab3:
                         x=data['Date'], open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'],
                         increasing_line_color='#ff4b4b', decreasing_line_color='#00d1ff'
                     )])
-                    # 売買点プロット
                     t_trades = df[df['ticker'] == str(target_ticker)]
                     for _, r in t_trades.iterrows():
                         fig.add_trace(go.Scatter(x=[r['date']], y=[r['price']], mode="markers",
@@ -256,17 +262,16 @@ with tab4:
     if not df.empty:
         show_df = df.copy()
         try:
-            # 日付表示用（エラー回避）
             show_df['date'] = pd.to_datetime(show_df['date'], errors='coerce').dt.strftime('%Y-%m-%d')
         except:
             show_df['date'] = show_df['date'].astype(str)
 
         cols = [c for c in ['date', 'ticker', 'name', 'type', 'price', 'qty'] if c in show_df.columns]
         
-        # ハイライト
         def highlight_active(row):
             if str(row['ticker']) in active_holdings:
                 return ['background-color: #554400'] * len(row)
             return [''] * len(row)
 
         st.dataframe(show_df[cols].style.apply(highlight_active, axis=1), use_container_width=True)
+
