@@ -161,40 +161,55 @@ with st.sidebar:
 # --- 5. メイン画面 ---
 page = st.session_state.page
 
+# ========== PAGE 1: 資産状況 ==========
 if page == "assets":
     st.title("Asset Overview")
+
+    # 資産計算
     total_stock_value = 0
     stock_details = []
     
     for ticker, info in active_holdings.items():
         curr, diff, pct = get_stock_info(ticker)
-        if curr is None: curr = info['total_cost']/info['qty']
+        if curr is None: curr = info['total_cost']/info['qty'] # エラー時は買値
+            
         val = curr * info['qty']
         total_stock_value += val
+        
         avg = info['total_cost']/info['qty']
         u_pl = val - info['total_cost']
-        stock_details.append({"ticker": ticker, "name": info['name'], "qty": info['qty'], "avg": avg, "curr": curr, "u_pl": u_pl, "val": val, "diff": diff, "pct": pct})
+        stock_details.append({
+            "ticker": ticker, "name": info['name'], "qty": info['qty'],
+            "avg": avg, "curr": curr, "u_pl": u_pl, "val": val,
+            "diff": diff, "pct": pct
+        })
 
+    # 総資産
     total_assets = current_cash + current_trust + total_stock_value
+    
+    # --- 目標バー ---
     p_stock = min(total_stock_value / target_amount, 1.0) * 100
     p_trust = min(current_trust / target_amount, 1.0) * 100
     p_cash = min(current_cash / target_amount, 1.0) * 100
     
     st.write(f"**目標達成率: {(total_assets/target_amount)*100:.1f}%** (目標: {target_amount:,.0f}円)")
+    
+    # マルチカラーバー
     st.markdown(f"""
     <div style="display: flex; height: 25px; width: 100%; background-color: #3b3d48; border-radius: 12px; overflow: hidden; margin-bottom: 5px;">
-        <div style="width: {p_stock}%; background-color: #ff4b4b;"></div>
-        <div style="width: {p_trust}%; background-color: #2ecc71;"></div>
-        <div style="width: {p_cash}%; background-color: #00d1ff;"></div>
+        <div style="width: {p_stock}%; background-color: #ff4b4b;" title="国内株"></div>
+        <div style="width: {p_trust}%; background-color: #2ecc71;" title="投資信託"></div>
+        <div style="width: {p_cash}%; background-color: #00d1ff;" title="現金"></div>
     </div>
     <div style="display:flex; justify-content:space-between; font-size:12px; color:#bdc3c7; margin-bottom:20px;">
-        <div style="display:flex; gap:15px;">
-            <span style="color:#ff4b4b;">■ 株: {total_stock_value:,.0f}円</span>
-            <span style="color:#2ecc71;">■ 投信: {current_trust:,.0f}円</span>
-            <span style="color:#00d1ff;">■ 現金: {current_cash:,.0f}円</span>
+        <div style="display:flex; gap:10px;">
+            <span style="color:#ff4b4b;">■ 株: {total_stock_value:,.0f}</span>
+            <span style="color:#2ecc71;">■ 投信: {current_trust:,.0f}</span>
+            <span style="color:#00d1ff;">■ 現金: {current_cash:,.0f}</span>
         </div>
         <span>あと: {target_amount - total_assets:,.0f}円</span>
-    </div>""", unsafe_allow_html=True)
+    </div>
+    """, unsafe_allow_html=True)
 
     c1, c2, c3 = st.columns(3)
     c1.metric("総資産", f"{total_assets:,.0f}円")
@@ -202,33 +217,52 @@ if page == "assets":
     c3.metric("現金・投信", f"{current_cash + current_trust:,.0f}円")
 
     st.subheader("保有銘柄")
-    if not stock_details: st.info("保有なし")
+    
+    if not stock_details:
+        st.info("現在保有している銘柄はありません")
+    
+    # 銘柄リスト（カード表示 ＋ ボタン）
     for s in stock_details:
-        # 含み損益の色（赤/青）
-        u_color_code = "#ff4b4b" if s['u_pl'] > 0 else "#00d1ff"
+        # 色の設定（プラス＝赤、マイナス＝青）
+        u_color = "#ff4b4b" if s['u_pl'] > 0 else "#00d1ff"
         u_sign = "+" if s['u_pl'] > 0 else ""
         
-        # 前日比の色（赤/青）
-        d_color_code = "#ff4b4b" if s['diff'] > 0 else "#00d1ff"
+        d_color = "#ff4b4b" if s['diff'] > 0 else "#00d1ff"
         d_sign = "+" if s['diff'] > 0 else ""
 
-        # HTML整形
-        btn_label = f"""
-        <div style="font-family: sans-serif;">
+        # カードのデザイン（HTML）
+        card_html = f"""
+        <div class="stock-card">
             <div style="display:flex; justify-content:space-between; align-items:center;">
-                <span style="font-size:18px; font-weight:bold; color:white;">{s['name']}</span>
-                <span style="font-size:14px; color:#ccc;">{s['ticker']}</span>
+                <div>
+                    <span style="font-size:20px; font-weight:bold; color:white;">{s['name']}</span>
+                    <span style="font-size:14px; color:#ccc; margin-left:5px;">{s['ticker']}</span>
+                </div>
+                <div style="text-align:right;">
+                    <span style="color:{u_color}; font-size:22px; font-weight:bold;">{u_sign}{s['u_pl']:,.0f}円</span>
+                </div>
             </div>
-            <div style="display:flex; justify-content:space-between; margin-top:5px;">
-                <span style="color:#ddd;">現在: {s['curr']:,.0f}円 <span style="color:{d_color_code};">({d_sign}{s['diff']:,.0f} / {d_sign}{s['pct']:.1f}%)</span></span>
-                <span style="color:{u_color_code}; font-weight:bold; font-size:16px;">{u_sign}{s['u_pl']:,.0f}円</span>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:5px;">
+                <span style="color:#ddd; font-size:15px;">
+                    現在: {s['curr']:,.0f}円 <span style="color:{d_color}; font-weight:bold;">({d_sign}{s['diff']:,.0f} / {d_sign}{s['pct']:.1f}%)</span>
+                </span>
+                <span style="font-size:13px; color:#888;">
+                    評価額: {s['val']:,.0f}円
+                </span>
             </div>
-            <div style="font-size:12px; color:#888; margin-top:2px;">
-                評価額: {s['val']:,.0f}円 | 取得: {s['avg']:,.0f}円 | {s['qty']:,}株
+            <hr style="margin:5px 0; border-color:#444;">
+            <div style="font-size:12px; color:#aaa; display:flex; justify-content:space-between;">
+                <span>取得単価: {s['avg']:,.0f}円</span>
+                <span>保有株数: {s['qty']:,}株</span>
             </div>
         </div>
         """
-        if st.button(btn_label, key=f"card_{s['ticker']}", use_container_width=True):
+        
+        # 1. まずHTMLできれいなカードを表示
+        st.markdown(card_html, unsafe_allow_html=True)
+        
+        # 2. その直下に「分析」ボタンを配置（幅いっぱいに）
+        if st.button(f"📊 {s['name']} のチャート分析へ", key=f"btn_{s['ticker']}", use_container_width=True):
             st.session_state.target_ticker = s['ticker']
             st.session_state.page = "analysis"
             st.rerun()
@@ -283,5 +317,6 @@ elif page == "history":
         sdf = df_trades.copy()
         sdf['date'] = pd.to_datetime(sdf['date']).dt.strftime('%Y-%m-%d')
         st.dataframe(sdf[['date', 'ticker', 'name', 'type', 'price', 'qty']].style.apply(lambda r: ['background-color: #3d3300']*6 if r['ticker'] in active_holdings else ['']*6, axis=1), use_container_width=True)
+
 
 
