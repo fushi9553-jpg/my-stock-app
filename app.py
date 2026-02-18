@@ -23,45 +23,37 @@ st.markdown("""
 conn = st.connection("gsheets", type=GSheetsConnection)
 df = conn.read(worksheet="trades", ttl=0)
 
-# ==========================================
-# 🛠️ データ洗浄（亡霊退治）コーナー
-# ==========================================
-if not df.empty:
-    # 1. 文字型に変換
-    df['ticker'] = df['ticker'].astype(str)
-    df['type'] = df['type'].astype(str)
-    
-    # 2. 全角を半角に、前後の空白を削除（例: "４００５ " -> "4005"）
-    # (unicodedataを使って正規化する処理を入れるのがベストですが、簡易的に空白削除と大文字化を行います)
-    df['ticker'] = df['ticker'].str.strip().str.upper() # 小文字も大文字に
-    df['type'] = df['type'].str.strip().str.upper()     # "in " -> "IN"
-
-    # 3. 日付の強力な変換
-    # どんな形式でもエラーを出さず、変換できない行は削除
-    try:
-        df['date'] = pd.to_datetime(df['date'].astype(str), format='mixed', errors='coerce')
-    except:
-        df['date'] = pd.to_datetime(df['date'].astype(str), errors='coerce')
-    
-    df = df.dropna(subset=['date'])
-
-    # 4. 【超重要】並び替えのルール変更
-    # 日付順 -> その中で「IN」が「OUT」より先に来るようにする
-    # (アルファベット順だと 'I'N は 'O'UT より先なので、typeでもソートすれば解決！)
-    df = df.sort_values(by=['date', 'type'], ascending=[True, True])
-
-# ==========================================
-
-# --- 3. 計算ロジック ---
+# --- 3. 計算ロジック（エラー対策済み） ---
 def process_data(data):
     holdings = {}
     history = []
     
+    # データが空なら即終了
     if data.empty:
         return {}, [], {"win_rate": 0, "ev": 0, "total_pl": 0, "count": 0}
     
+    # === 【ここが修正ポイント】日付変換の強化 ===
+    # 1. まず強制的に文字型にする (.astype(str))
+    # 2. errors='coerce' をつけることで、変換できないゴミデータがあってもエラーで止まらず「NaT(空)」にする
+    # 3. format='mixed' で / と - が混ざっていても許容する
+    try:
+        data['date'] = pd.to_datetime(data['date'].astype(str), format='mixed', errors='coerce')
+    except:
+        # 万が一の予備策
+        data['date'] = pd.to_datetime(data['date'].astype(str), errors='coerce')
+
+    # 日付変換に失敗した行（NaT）は削除して無視する
+    data = data.dropna(subset=['date'])
+    
+    # === 【ここが亡霊退治ポイント】並び替え ===
+    # 日付順、かつ同じ日なら「IN」→「OUT」の順に並べる
+    # (IN は OUT よりアルファベット順で先なので、そのままソートでOK)
+    data = data.sort_values(by=['date', 'type'], ascending=[True, True])
+    
     for _, row in data.iterrows():
-        t = row['ticker']
+        t = str(row['ticker']).strip() # 空白削除
+        
+        # 名前確保
         n = row['name'] if 'name' in row and pd.notna(row['name']) else t
         
         if t not in holdings: 
@@ -71,34 +63,28 @@ def process_data(data):
         if 'name' in row and pd.notna(row['name']):
             holdings[t]["name"] = row['name']
         
-        if row['type'] == "IN":
+        # 売買ロジック
+        type_str = str(row['type']).strip().upper() # 大文字・空白削除
+        
+        if type_str == "IN":
             holdings[t]['qty'] += row['qty']
             holdings[t]['total_cost'] += row['price'] * row['qty']
             
-        elif row['type'] == "OUT":
-            # 【変更】在庫がなくても強制的に引き算してみる（エラー発見用）
-            # もしこれで保有数がマイナスになったら、OUTが多すぎるかINの日付間違い
-            
-            # 平均単価の計算（在庫がある時のみ）
-            current_avg = 0
+        elif type_str == "OUT":
             if holdings[t]['qty'] > 0:
                 current_avg = holdings[t]['total_cost'] / holdings[t]['qty']
-            
-            p_l = (row['price'] - current_avg) * row['qty']
-            
-            history.append({
-                "ticker": t, "name": holdings[t]["name"],
-                "pl": p_l, "date": row['date'], 
-                "price": row['price'], "type": "OUT"
-            })
-            
-            holdings[t]['qty'] -= row['qty']
-            if holdings[t]['qty'] > 0:
+                p_l = (row['price'] - current_avg) * row['qty']
+                
+                history.append({
+                    "ticker": t, "name": holdings[t]["name"],
+                    "pl": p_l, "date": row['date'], 
+                    "price": row['price'], "type": "OUT"
+                })
+                
+                holdings[t]['qty'] -= row['qty']
                 holdings[t]['total_cost'] -= current_avg * row['qty']
-            else:
-                holdings[t]['total_cost'] = 0 # 売り切ったらコストリセット
-            
-    # 保有中のみ抽出（数量が0.01以上のものだけ。マイナスも表示しない）
+
+    # 保有中のみ抽出（誤差対策で0.001以上）
     active_holdings = {k: v for k, v in holdings.items() if v['qty'] > 0.001}
     
     # 全体統計
@@ -115,6 +101,7 @@ def process_data(data):
     
     return active_holdings, history, stats
 
+# 処理実行
 active_holdings, history_data, global_stats = process_data(df)
 
 # --- 4. サイドバー（入力フォームのみ） ---
@@ -129,6 +116,7 @@ with st.sidebar:
         f_qty = st.number_input("数量", value=100)
         
         if st.form_submit_button("保存"):
+            # 保存時は日付を文字列にしておく
             new_data = pd.DataFrame([{
                 "date": f_date, 
                 "ticker": f_ticker,
@@ -142,8 +130,7 @@ with st.sidebar:
             st.success("保存しました！")
             st.rerun()
 
-# --- 5. メイン画面（タブ構成を変更） ---
-# タブを4つに増やしました
+# --- 5. メイン画面 ---
 tab1, tab2, tab3, tab4 = st.tabs(["💰 資産状況", "📈 全体成績", "📊 個別分析", "📜 売買ログ"])
 
 # 【タブ1】資産状況
@@ -159,7 +146,7 @@ with tab1:
                 if not stock.empty:
                     current_p = stock['Close'].iloc[-1]
                 else:
-                    current_p = info['total_cost'] / info['qty'] # 取得失敗時は買値で仮置き
+                    current_p = info['total_cost'] / info['qty']
             except:
                 current_p = info['total_cost'] / info['qty']
 
@@ -197,59 +184,34 @@ with tab1:
     
     st.metric("合計含み損益", f"{total_unrealized:+,.0f}円")
 
-# 【タブ2】全体成績（新設）
+# 【タブ2】全体成績（サイドバーから移動済み）
 with tab2:
     st.title("パフォーマンス分析")
-    
-    # 大きな指標表示
     c1, c2, c3 = st.columns(3)
     c1.metric("累計確定損益", f"{global_stats['total_pl']:+,.0f}円")
     c2.metric("勝率", f"{global_stats['win_rate']:.1f}%")
     c3.metric("総取引回数", f"{global_stats['count']}回")
-    
     st.divider()
-    
-    c4, c5 = st.columns(2)
-    c4.metric("平均利益 (期待値)", f"{global_stats['ev']:+,.0f}円 / 回")
-    
-    # 簡易的な損益推移グラフ（履歴がある場合のみ）
-    if history_data:
-        df_hist = pd.DataFrame(history_data)
-        df_hist = df_hist.sort_values('date')
-        df_hist['cum_pl'] = df_hist['pl'].cumsum() # 累積和
-        
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=df_hist['date'], y=df_hist['cum_pl'],
-            mode='lines+markers', name='資産推移',
-            line=dict(color='#2ecc71', width=3)
-        ))
-        fig.update_layout(
-            title="資産推移グラフ",
-            template="plotly_dark", height=300,
-            margin=dict(l=0, r=0, t=40, b=0)
-        )
-        st.plotly_chart(fig, use_container_width=True)
+    st.metric("平均利益 (期待値)", f"{global_stats['ev']:+,.0f}円 / 回")
 
 # 【タブ3】個別分析
 with tab3:
     st.title("銘柄別詳細")
-    
     if not df.empty:
-        df['disp_label'] = df['ticker'] + " : " + df['name'].fillna('')
-        # 重複削除して辞書化
+        df['disp_label'] = df['ticker'].astype(str) + " : " + df['name'].fillna('')
         unique_options = {}
         for idx, row in df.iterrows():
-            unique_options[row['ticker']] = row['disp_label']
-            
+            unique_options[str(row['ticker'])] = row['disp_label']
+        
         selected_label = st.selectbox("銘柄を選択", list(unique_options.values()))
-        # ラベルからTickerを特定
-        target_ticker = [k for k, v in unique_options.items() if v == selected_label][0]
+        if selected_label:
+            target_ticker = [k for k, v in unique_options.items() if v == selected_label][0]
+        else:
+            target_ticker = None
     else:
         target_ticker = None
 
     if target_ticker:
-        # 統計
         this_hist = [h for h in history_data if h['ticker'] == target_ticker]
         t_wins = len([h for h in this_hist if h['pl'] > 0])
         t_count = len(this_hist)
@@ -257,81 +219,57 @@ with tab3:
         t_total = sum([h['pl'] for h in this_hist])
         t_ev = (t_total / t_count) if t_count > 0 else 0
 
-        # レイアウト
         col1, col2 = st.columns([1, 2])
-        
         with col1:
-            # 勝率円グラフ
             fig_pie = go.Figure(data=[go.Pie(
                 labels=['Win', 'Lose'], values=[t_wins, t_count - t_wins],
                 hole=.6, marker_colors=['#ff4b4b', '#00d1ff'], textinfo='none'
             )])
-            fig_pie.update_layout(
-                showlegend=False, height=180, margin=dict(t=0, b=0, l=0, r=0),
+            fig_pie.update_layout(showlegend=False, height=180, margin=dict(t=0,b=0,l=0,r=0),
                 paper_bgcolor='rgba(0,0,0,0)',
-                annotations=[dict(text=f'{t_win_rate:.0f}%', x=0.5, y=0.5, font_size=24, showarrow=False, font_color='white')]
-            )
+                annotations=[dict(text=f'{t_win_rate:.0f}%', x=0.5, y=0.5, font_size=24, showarrow=False, font_color='white')])
             st.write("勝率")
             st.plotly_chart(fig_pie, use_container_width=True)
-            
-            st.metric("期待値 (平均)", f"{t_ev:+,.0f}円")
+            st.metric("期待値", f"{t_ev:+,.0f}円")
 
         with col2:
             st.metric("累計確定損益", f"{t_total:+,.0f}円")
-            
-            # チャート
-            t_trades = df[df['ticker'] == target_ticker].copy()
-            # エラー対策済みの日付変換
-            try:
-                t_trades['date'] = pd.to_datetime(t_trades['date'].astype(str), format='mixed', errors='coerce')
-            except:
-                t_trades['date'] = pd.to_datetime(t_trades['date'].astype(str), errors='coerce')
-                
             try:
                 data = yf.download(target_ticker, period="6mo", interval="1d")
                 if not data.empty:
                     data = data.reset_index()
                     if isinstance(data.columns, pd.MultiIndex): data.columns = data.columns.get_level_values(0)
-                    
                     fig = go.Figure(data=[go.Candlestick(
                         x=data['Date'], open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'],
                         increasing_line_color='#ff4b4b', decreasing_line_color='#00d1ff'
                     )])
-                    
+                    # 売買点プロット
+                    t_trades = df[df['ticker'] == str(target_ticker)]
                     for _, r in t_trades.iterrows():
-                        if pd.notna(r['date']):
-                            fig.add_trace(go.Scatter(
-                                x=[r['date']], y=[r['price']], mode="markers",
-                                marker=dict(color="yellow", size=10, symbol="triangle-up" if r['type']=="IN" else "triangle-down"),
-                                showlegend=False
-                            ))
+                        fig.add_trace(go.Scatter(x=[r['date']], y=[r['price']], mode="markers",
+                            marker=dict(color="yellow", size=10), showlegend=False))
                     fig.update_layout(template="plotly_dark", height=400, xaxis_rangeslider_visible=False)
                     st.plotly_chart(fig, use_container_width=True)
             except:
                 st.error("チャート取得不可")
 
-# 【タブ4】売買ログ（未決済ハイライト）
+# 【タブ4】売買ログ
 with tab4:
     st.title("全取引履歴")
-    st.caption("⚠️ 黄色い行 = アプリ上で『保有中』と認識されている銘柄")
-    
     if not df.empty:
         show_df = df.copy()
-        # 表示用に日付を文字列化
+        # 日付表示用（エラー回避）
         try:
-            show_df['date'] = pd.to_datetime(show_df['date'].astype(str), format='mixed', errors='coerce').dt.strftime('%Y-%m-%d')
+            show_df['date'] = pd.to_datetime(show_df['date']).dt.strftime('%Y-%m-%d')
         except:
             show_df['date'] = show_df['date'].astype(str)
 
-        # 列の整理
         cols = [c for c in ['date', 'ticker', 'name', 'type', 'price', 'qty'] if c in show_df.columns]
-        show_df = show_df[cols]
-
-        # ハイライト関数
+        
+        # ハイライト
         def highlight_active(row):
-            if row['ticker'] in active_holdings:
-                return ['background-color: #554400'] * len(row) # 濃い黄色
+            if str(row['ticker']) in active_holdings:
+                return ['background-color: #554400'] * len(row)
             return [''] * len(row)
 
-        st.dataframe(show_df.style.apply(highlight_active, axis=1), use_container_width=True)
-
+        st.dataframe(show_df[cols].style.apply(highlight_active, axis=1), use_container_width=True)
