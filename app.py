@@ -32,22 +32,19 @@ def process_data(data):
     if data.empty:
         return {}, [], {"win_rate": 0, "ev": 0, "total_pl": 0, "count": 0}
     
-    # === 【ここが修正ポイント】日付変換の強化 ===
-    # 1. まず強制的に文字型にする (.astype(str))
-    # 2. errors='coerce' をつけることで、変換できないゴミデータがあってもエラーで止まらず「NaT(空)」にする
-    # 3. format='mixed' で / と - が混ざっていても許容する
+    # === 【ここがエラー対策ポイント】 ===
+    # 日付変換でエラーが出ても、その行を無視してアプリを止めないようにする
     try:
-        data['date'] = pd.to_datetime(data['date'].astype(str), format='mixed', errors='coerce')
-    except:
-        # 万が一の予備策
+        # 強制的に文字列にしてから変換。エラーがある箇所はNaT(空)にする
         data['date'] = pd.to_datetime(data['date'].astype(str), errors='coerce')
+    except Exception:
+        return {}, [], {"win_rate": 0, "ev": 0, "total_pl": 0, "count": 0}
 
     # 日付変換に失敗した行（NaT）は削除して無視する
     data = data.dropna(subset=['date'])
     
-    # === 【ここが亡霊退治ポイント】並び替え ===
-    # 日付順、かつ同じ日なら「IN」→「OUT」の順に並べる
-    # (IN は OUT よりアルファベット順で先なので、そのままソートでOK)
+    # === 【亡霊退治ポイント】 ===
+    # 日付順、かつ同じ日なら「IN」→「OUT」の順に強制並び替え
     data = data.sort_values(by=['date', 'type'], ascending=[True, True])
     
     for _, row in data.iterrows():
