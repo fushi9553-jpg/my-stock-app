@@ -25,8 +25,35 @@ df = conn.read(worksheet="trades", ttl=0)
 def process_data(data):
     holdings = {}
     history = []
+    
     if data.empty:
         return {}, []
+        
+    data['date'] = pd.to_datetime(data['date'].astype(str), format='mixed', errors='coerce')
+    
+    # 万が一、変なデータがあって日付に変換できなかった行は削除して無視する（安全策）
+    data = data.dropna(subset=['date'])
+    
+    # 日付でソート
+    data = data.sort_values('date')
+    
+    for _, row in data.iterrows():
+        t = row['ticker']
+        if t not in holdings: holdings[t] = {"qty": 0, "total_cost": 0}
+        
+        if row['type'] == "IN":
+            holdings[t]['qty'] += row['qty']
+            holdings[t]['total_cost'] += row['price'] * row['qty']
+        elif row['type'] == "OUT":
+            if holdings[t]['qty'] > 0:
+                avg_price = holdings[t]['total_cost'] / holdings[t]['qty']
+                p_l = (row['price'] - avg_price) * row['qty']
+                history.append({"ticker": t, "pl": p_l, "date": row['date'], "price": row['price']})
+                holdings[t]['qty'] -= row['qty']
+                holdings[t]['total_cost'] -= avg_price * row['qty']
+            
+    active_holdings = {k: v for k, v in holdings.items() if v['qty'] > 0}
+    return active_holdings, history
     
     # 日付でソート
     data['date'] = pd.to_datetime(data['date'])
@@ -137,4 +164,5 @@ with tab2:
 # 【タブ3】全履歴
 with tab3:
     st.title("売買ログ（スプレッドシート同期）")
+
     st.dataframe(df, use_container_width=True)
