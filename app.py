@@ -9,22 +9,42 @@ from datetime import datetime
 # 1. ページ設定
 st.set_page_config(page_title="My Portfolio App", layout="wide", initial_sidebar_state="collapsed")
 
-# --- セッション状態の初期化 (ページ移動やデータ保持用) ---
+# --- セッション状態の初期化 ---
 if 'page' not in st.session_state: st.session_state.page = "assets"
 if 'target_ticker' not in st.session_state: st.session_state.target_ticker = None
-if 'target_amount' not in st.session_state: st.session_state.target_amount = 1000000.0 # 目標金額を記憶
+if 'target_amount' not in st.session_state: st.session_state.target_amount = 1000000.0
+
+# ★重要：URLパラメータの監視（クリックされたカードを検知する仕組み）★
+# カードがクリックされるとURLに "?ticker=xxxx" がつくので、それを検知してページを飛ばす
+if "ticker" in st.query_params:
+    st.session_state.target_ticker = st.query_params["ticker"]
+    st.session_state.page = "analysis"
+    st.query_params.clear() # URLを元に戻す
 
 # デザイン設定
 st.markdown("""
     <style>
     .main { background-color: #0e1117; color: white; }
     .stMetric { background-color: #262730; padding: 10px; border-radius: 8px; border-left: 5px solid #2ecc71; }
-    /* ボタンデザイン */
-    div.stButton > button {
-        width: 100%; border-radius: 8px; height: auto; padding: 10px;
-        border: 1px solid #3b3d48; background-color: #262730; text-align: left;
+    
+    /* カードのデザイン定義 */
+    .stock-card {
+        background-color: #262730;
+        padding: 15px;
+        border-radius: 10px;
+        margin-bottom: 10px;
+        border: 1px solid #3b3d48;
+        transition: transform 0.1s, border-color 0.1s;
     }
-    div.stButton > button:hover { border-color: #2ecc71; color: #2ecc71; }
+    /* ホバー時のアクション */
+    .stock-card:hover {
+        border-color: #2ecc71;
+        transform: translateY(-2px);
+        cursor: pointer;
+    }
+    /* リンクの下線を消す */
+    a { text-decoration: none; color: inherit; }
+    a:hover { text-decoration: none; color: inherit; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -43,24 +63,16 @@ def load_data():
 df_trades, df_balance = load_data()
 
 # --- 3. ロジック類 ---
-
 def calculate_assets(balance_data):
     if balance_data.empty: return 0, 0
     balance_data['amount'] = pd.to_numeric(balance_data['amount'], errors='coerce').fillna(0)
     
-    # 現金 (入金 - 出金)
     deposits = balance_data[balance_data['type'] == 'DEPOSIT']['amount'].sum()
     withdrawals = balance_data[balance_data['type'] == 'WITHDRAW']['amount'].sum()
     cash = deposits - withdrawals
     
-    # 投資信託 (最新の入力値を採用するロジックに変更)
-    # 履歴を日付順に並べ、一番新しい 'TRUST' の入力を現在の評価額とする
     trust_data = balance_data[balance_data['type'] == 'TRUST'].sort_values('date')
-    if not trust_data.empty:
-        current_trust = trust_data.iloc[-1]['amount']
-    else:
-        current_trust = 0
-        
+    current_trust = trust_data.iloc[-1]['amount'] if not trust_data.empty else 0
     return cash, current_trust
 
 def process_data(data):
@@ -117,19 +129,13 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 with st.sidebar:
     st.header("MENU")
     
-    # ページ遷移ロジック（ボタンで強制移動させるためにindexを使用）
     pages = ["assets", "performance", "analysis", "history"]
     labels = ["💰 資産状況", "📈 全体成績", "📊 個別分析", "📜 売買ログ"]
     
-    # 現在のページに対応するインデックスを取得
-    try:
-        current_index = pages.index(st.session_state.page)
-    except:
-        current_index = 0
-        
+    try: current_index = pages.index(st.session_state.page)
+    except: current_index = 0
     selected_label = st.radio("Go to", labels, index=current_index)
     
-    # ラジオボタンでページが変わった場合の処理
     new_page = pages[labels.index(selected_label)]
     if st.session_state.page != new_page:
         st.session_state.page = new_page
@@ -137,15 +143,12 @@ with st.sidebar:
 
     st.divider()
     
-    # 目標設定（セッション状態を使ってリセット防止）
     new_target = st.number_input("目標資産額 (円)", value=st.session_state.target_amount, step=10000.0)
     if new_target != st.session_state.target_amount:
         st.session_state.target_amount = new_target
     
     with st.expander("📝 データ入力", expanded=False):
         tab1, tab2, tab3 = st.tabs(["株", "現金", "投信"])
-        
-        # 株入力
         with tab1:
             with st.form("trade_form", clear_on_submit=True):
                 f_d = st.date_input("日付")
@@ -160,10 +163,8 @@ with st.sidebar:
                     st.cache_data.clear()
                     st.success("完了")
                     st.rerun()
-        
-        # 現金入力
         with tab2:
-            st.caption("入出金を記録します")
+            st.caption("入出金を記録")
             with st.form("cash_form", clear_on_submit=True):
                 c_d = st.date_input("日付")
                 c_k = st.selectbox("種別", ["DEPOSIT", "WITHDRAW"], format_func=lambda x: "入金" if x=="DEPOSIT" else "出金")
@@ -175,15 +176,12 @@ with st.sidebar:
                     st.cache_data.clear()
                     st.success("完了")
                     st.rerun()
-                    
-        # 投信入力
         with tab3:
-            st.caption("現在の評価額を入力して更新")
+            st.caption("現在の評価額を入力")
             with st.form("trust_form", clear_on_submit=True):
                 t_d = st.date_input("日付")
                 t_a = st.number_input("現在の評価額合計", 0)
                 if st.form_submit_button("投信 更新"):
-                    # TRUSTとして保存
                     nb = pd.DataFrame([{"date": t_d, "type": "TRUST", "amount": t_a, "memo": "残高更新"}])
                     conn.update(worksheet="balance", data=pd.concat([df_balance, nb], ignore_index=True))
                     st.cache_data.clear()
@@ -208,7 +206,6 @@ if page == "assets":
         u_pl = val - info['total_cost']
         stock_details.append({"ticker": ticker, "name": info['name'], "qty": info['qty'], "avg": avg, "curr": curr, "u_pl": u_pl, "val": val, "diff": diff, "pct": pct})
 
-    # 目標額はセッションから取得
     target_val = st.session_state.target_amount
     total_assets = current_cash + current_trust + total_stock_value
     
@@ -239,35 +236,47 @@ if page == "assets":
 
     st.subheader("保有銘柄")
     if not stock_details: st.info("保有なし")
+    
+    # ★★★★ 究極のカード生成ロジック ★★★★
     for s in stock_details:
+        # 含み損益の色（プラス:赤 / マイナス:青）
         u_color = "#ff4b4b" if s['u_pl'] > 0 else "#00d1ff"
         u_sign = "+" if s['u_pl'] > 0 else ""
+        
+        # 前日比の色（プラス:赤 / マイナス:青）
         d_color = "#ff4b4b" if s['diff'] > 0 else "#00d1ff"
         d_sign = "+" if s['diff'] > 0 else ""
-        
-        # HTMLカード表示
-        st.markdown(f"""
-        <div class="stock-card">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-                <div><span style="font-size:20px; font-weight:bold;">{s['name']}</span><span style="font-size:14px; color:#ccc; margin-left:5px;">{s['ticker']}</span></div>
-                <div><span style="color:{u_color}; font-size:20px; font-weight:bold;">{u_sign}{s['u_pl']:,.0f}円</span></div>
+
+        # リンク先のURL（自分自身にtickerパラメータをつけて再読み込みさせる）
+        # target="_self" で同じタブで開く
+        link_url = f"?ticker={s['ticker']}"
+
+        # HTMLカード (<a>タグで囲むことで全体がクリック可能に！)
+        # hover時に少し浮き上がるCSSを上に定義してあります
+        card_html = f"""
+        <a href="{link_url}" target="_self">
+            <div class="stock-card">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                        <span style="font-size:18px; font-weight:bold; color:white;">{s['name']}</span>
+                        <span style="font-size:14px; color:#ccc;">{s['ticker']}</span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; margin-top:5px;">
+                        <span style="color:#ddd;">現在: {s['curr']:,.0f}円 <span style="color:{d_color};">({d_sign}{s['diff']:,.0f} / {d_sign}{s['pct']:.1f}%)</span></span>
+                    </div>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-top:5px;">
+                    <div style="font-size:12px; color:#888;">
+                        評価額: {s['val']:,.0f}円 | 取得: {s['avg']:,.0f}円 | {s['qty']:,}株
+                    </div>
+                    <div>
+                        <span style="color:{u_color}; font-weight:bold; font-size:20px;">{u_sign}{s['u_pl']:,.0f}円</span>
+                    </div>
+                </div>
             </div>
-            <div style="display:flex; justify-content:space-between; margin-top:5px;">
-                <span style="color:#ddd;">現在: {s['curr']:,.0f}円 <span style="color:{d_color};">({d_sign}{s['diff']:,.0f} / {d_sign}{s['pct']:.1f}%)</span></span>
-                <span style="font-size:13px; color:#aaa;">評価額: {s['val']:,.0f}円</span>
-            </div>
-            <hr style="margin:5px 0; border-color:#444;">
-            <div style="font-size:12px; color:#aaa; display:flex; justify-content:space-between;">
-                <span>取得: {s['avg']:,.0f}円</span><span>保有: {s['qty']:,}株</span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # 分析へ飛ぶボタン
-        if st.button(f"📊 {s['name']} のチャートへ", key=f"btn_{s['ticker']}", use_container_width=True):
-            st.session_state.page = "analysis"      # ページを分析に切り替え
-            st.session_state.target_ticker = s['ticker'] # 銘柄を指定
-            st.rerun() # 強制リロード
+        </a>
+        """
+        st.markdown(card_html, unsafe_allow_html=True)
 
 elif page == "performance":
     st.title("Performance")
@@ -319,7 +328,7 @@ elif page == "history":
     if not df_trades.empty:
         sdf = df_trades.copy()
         sdf['date'] = pd.to_datetime(sdf['date']).dt.strftime('%Y-%m-%d')
-        st.dataframe(sdf[['date', 'ticker', 'name', 'type', 'price', 'qty']].style.apply(lambda r: ['background-color: #3d3300']*6 if r['ticker'] in active_holdings else ['']*6, axis=1), use_container_width=True)                                                                                                        
+        st.dataframe(sdf[['date', 'ticker', 'name', 'type', 'price', 'qty']].style.apply(lambda r: ['background-color: #3d3300']*6 if r['ticker'] in active_holdings else ['']*6, axis=1), use_container_width=True)
 
 
 
