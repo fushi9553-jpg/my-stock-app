@@ -12,55 +12,69 @@ st.set_page_config(page_title="My Portfolio App", layout="wide", initial_sidebar
 # --- セッション状態の初期化 ---
 if 'page' not in st.session_state: st.session_state.page = "assets"
 if 'target_ticker' not in st.session_state: st.session_state.target_ticker = None
-if 'target_amount' not in st.session_state: st.session_state.target_amount = 1000000.0
+# 目標金額は後でロードするので初期値は仮置き
 
-# ★重要：URLパラメータの監視（クリックされたカードを検知する仕組み）★
-# カードがクリックされるとURLに "?ticker=xxxx" がつくので、それを検知してページを飛ばす
-if "ticker" in st.query_params:
-    st.session_state.target_ticker = st.query_params["ticker"]
-    st.session_state.page = "analysis"
-    st.query_params.clear() # URLを元に戻す
-
-# デザイン設定
+# ★★★ CSSデザイン（青線削除・カード分離） ★★★
 st.markdown("""
     <style>
     .main { background-color: #0e1117; color: white; }
-    .stMetric { background-color: #262730; padding: 10px; border-radius: 8px; border-left: 5px solid #2ecc71; }
     
-    /* カードのデザイン定義 */
+    /* リンクの青線・下線を強制的に消す */
+    a { text-decoration: none !important; color: inherit !important; }
+    a:hover { text-decoration: none !important; color: inherit !important; }
+    
+    /* カードのデザイン */
     .stock-card {
         background-color: #262730;
         padding: 15px;
         border-radius: 10px;
         margin-bottom: 10px;
-       
+        border: 1px solid #3b3d48;
         transition: transform 0.1s, border-color 0.1s;
+        color: white; /* 文字色を白で固定 */
+        text-decoration: none; /* 下線を消す */
     }
-    /* ホバー時のアクション */
     .stock-card:hover {
         border-color: #2ecc71;
         transform: translateY(-2px);
         cursor: pointer;
     }
-    /* リンクの下線を消す */
-    a { text-decoration: none; color: inherit; }
-    a:hover { text-decoration: none; color: inherit; }
+
+    /* メトリック（上部の数字カード）のデザイン */
+    .stMetric {
+        background-color: #262730;
+        padding: 15px;
+        border-radius: 8px;
+        border-left: 5px solid #2ecc71;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
     </style>
     """, unsafe_allow_html=True)
 
 # --- 2. データ読み込み ---
+conn = st.connection("gsheets", type=GSheetsConnection)
+
 @st.cache_data(ttl=600)
 def load_data():
-    conn = st.connection("gsheets", type=GSheetsConnection)
     try:
         df_t = conn.read(worksheet="trades", ttl=0)
         try: df_b = conn.read(worksheet="balance", ttl=0)
         except: df_b = pd.DataFrame(columns=['date', 'type', 'amount', 'memo'])
-        return df_t, df_b
+        try: df_s = conn.read(worksheet="settings", ttl=0)
+        except: df_s = pd.DataFrame(columns=['key', 'value'])
+        return df_t, df_b, df_s
     except Exception as e:
-        return pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-df_trades, df_balance = load_data()
+df_trades, df_balance, df_settings = load_data()
+
+# 目標金額の取得（設定シートから）
+try:
+    saved_target = df_settings[df_settings['key'] == 'target_amount']['value'].iloc[0]
+    st.session_state.target_amount = float(saved_target)
+except:
+    if 'target_amount' not in st.session_state:
+        st.session_state.target_amount = 1000000.0
 
 # --- 3. ロジック類 ---
 def calculate_assets(balance_data):
@@ -124,7 +138,11 @@ def get_stock_info(ticker):
     except: return None, 0, 0
 
 # --- 4. サイドバー ---
-conn = st.connection("gsheets", type=GSheetsConnection)
+# URLパラメータ検知（クリック遷移）
+if "ticker" in st.query_params:
+    st.session_state.target_ticker = st.query_params["ticker"]
+    st.session_state.page = "analysis"
+    st.query_params.clear()
 
 with st.sidebar:
     st.header("MENU")
@@ -143,10 +161,19 @@ with st.sidebar:
 
     st.divider()
     
-    new_target = st.number_input("目標資産額 (円)", value=st.session_state.target_amount, step=10000.0)
-    if new_target != st.session_state.target_amount:
-        st.session_state.target_amount = new_target
+    # 目標設定（DB保存機能付き）
+    current_target = st.session_state.target_amount
+    new_target = st.number_input("目標資産額 (円)", value=current_target, step=10000.0)
     
+    # 値が変わっていたらスプレッドシートを更新
+    if new_target != current_target:
+        st.session_state.target_amount = new_target
+        # settingsシートを更新
+        new_settings = pd.DataFrame([{'key': 'target_amount', 'value': new_target}])
+        conn.update(worksheet="settings", data=new_settings)
+        st.toast("目標金額を保存しました！", icon="💾")
+    
+    # データ入力
     with st.expander("📝 データ入力", expanded=False):
         tab1, tab2, tab3 = st.tabs(["株", "現金", "投信"])
         with tab1:
@@ -229,37 +256,32 @@ if page == "assets":
         <span>あと: {target_val - total_assets:,.0f}円</span>
     </div>""", unsafe_allow_html=True)
 
-    c1, c2, c3 = st.columns(3)
+    # ★★★ ここでカードを4つに分割 ★★★
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("総資産", f"{total_assets:,.0f}円")
     c2.metric("国内株", f"{total_stock_value:,.0f}円")
-    c3.metric("現金・投信", f"{current_cash + current_trust:,.0f}円")
+    c3.metric("投資信託", f"{current_trust:,.0f}円")
+    c4.metric("現金余力", f"{current_cash:,.0f}円")
 
     st.subheader("保有銘柄")
     if not stock_details: st.info("保有なし")
     
-    # ★★★★ 究極のカード生成ロジック ★★★★
     for s in stock_details:
-        # 含み損益の色（プラス:赤 / マイナス:青）
         u_color = "#ff4b4b" if s['u_pl'] > 0 else "#00d1ff"
         u_sign = "+" if s['u_pl'] > 0 else ""
-        
-        # 前日比の色（プラス:赤 / マイナス:青）
         d_color = "#ff4b4b" if s['diff'] > 0 else "#00d1ff"
         d_sign = "+" if s['diff'] > 0 else ""
 
-        # リンク先のURL（自分自身にtickerパラメータをつけて再読み込みさせる）
-        # target="_self" で同じタブで開く
         link_url = f"?ticker={s['ticker']}"
 
-        # HTMLカード (<a>タグで囲むことで全体がクリック可能に！)
-        # hover時に少し浮き上がるCSSを上に定義してあります
+        # CSSで a { text-decoration: none } を指定したので、青線は消えます
         card_html = f"""
         <a href="{link_url}" target="_self">
             <div class="stock-card">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
                     <div>
                         <span style="font-size:18px; font-weight:bold; color:white;">{s['name']}</span>
-                        <span style="font-size:14px; color:#ccc;">{s['ticker']}</span>
+                        <span style="font-size:14px; color:#ccc; margin-left:5px;">{s['ticker']}</span>
                     </div>
                     <div style="display:flex; justify-content:space-between; margin-top:5px;">
                         <span style="color:#ddd;">現在: {s['curr']:,.0f}円 <span style="color:{d_color};">({d_sign}{s['diff']:,.0f} / {d_sign}{s['pct']:.1f}%)</span></span>
