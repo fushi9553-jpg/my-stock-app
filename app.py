@@ -14,7 +14,6 @@ st.markdown("""
     .main { background-color: #121d2b; color: white; }
     .stMetric { background-color: #1e2e3e; padding: 10px; border-radius: 5px; border-left: 5px solid #2ecc71; }
     .stock-card { background-color: #1e2e3e; padding: 15px; border-radius: 10px; margin-bottom: 10px; border: 1px solid #34495e; }
-    /* タブの文字を大きく */
     button[data-baseweb="tab"] { font-size: 18px; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
@@ -23,7 +22,7 @@ st.markdown("""
 conn = st.connection("gsheets", type=GSheetsConnection)
 df = conn.read(worksheet="trades", ttl=0)
 
-# --- 3. 計算ロジック（エラー対策済み） ---
+# --- 3. 計算ロジック（エラー対策・亡霊退治済み） ---
 def process_data(data):
     holdings = {}
     history = []
@@ -32,23 +31,25 @@ def process_data(data):
     if data.empty:
         return {}, [], {"win_rate": 0, "ev": 0, "total_pl": 0, "count": 0}
     
-    # === 【ここがエラー対策ポイント】 ===
-    # 日付変換でエラーが出ても、その行を無視してアプリを止めないようにする
+    # === エラー対策: 日付変換 ===
+    # ここがエラーの原因だった場所です。try-exceptとcoerceで強制的に突破します。
     try:
         # 強制的に文字列にしてから変換。エラーがある箇所はNaT(空)にする
         data['date'] = pd.to_datetime(data['date'].astype(str), errors='coerce')
     except Exception:
+        # 何があっても空のデータを返してアプリを落とさない
         return {}, [], {"win_rate": 0, "ev": 0, "total_pl": 0, "count": 0}
 
     # 日付変換に失敗した行（NaT）は削除して無視する
     data = data.dropna(subset=['date'])
     
-    # === 【亡霊退治ポイント】 ===
-    # 日付順、かつ同じ日なら「IN」→「OUT」の順に強制並び替え
+    # === 亡霊退治: 強制並び替え ===
+    # 日付順、かつ同じ日なら「IN」→「OUT」の順に並べる
     data = data.sort_values(by=['date', 'type'], ascending=[True, True])
     
     for _, row in data.iterrows():
-        t = str(row['ticker']).strip() # 空白削除
+        # 銘柄コードを文字列化して空白削除
+        t = str(row['ticker']).strip()
         
         # 名前確保
         n = row['name'] if 'name' in row and pd.notna(row['name']) else t
@@ -60,8 +61,8 @@ def process_data(data):
         if 'name' in row and pd.notna(row['name']):
             holdings[t]["name"] = row['name']
         
-        # 売買ロジック
-        type_str = str(row['type']).strip().upper() # 大文字・空白削除
+        # 売買ロジック（型変換を確実に行う）
+        type_str = str(row['type']).strip().upper()
         
         if type_str == "IN":
             holdings[t]['qty'] += row['qty']
@@ -101,7 +102,7 @@ def process_data(data):
 # 処理実行
 active_holdings, history_data, global_stats = process_data(df)
 
-# --- 4. サイドバー（入力フォームのみ） ---
+# --- 4. サイドバー ---
 with st.sidebar:
     st.header("📥 トレード入力")
     with st.form("add_trade", clear_on_submit=True):
@@ -113,7 +114,6 @@ with st.sidebar:
         f_qty = st.number_input("数量", value=100)
         
         if st.form_submit_button("保存"):
-            # 保存時は日付を文字列にしておく
             new_data = pd.DataFrame([{
                 "date": f_date, 
                 "ticker": f_ticker,
@@ -181,7 +181,7 @@ with tab1:
     
     st.metric("合計含み損益", f"{total_unrealized:+,.0f}円")
 
-# 【タブ2】全体成績（サイドバーから移動済み）
+# 【タブ2】全体成績
 with tab2:
     st.title("パフォーマンス分析")
     c1, c2, c3 = st.columns(3)
@@ -255,9 +255,9 @@ with tab4:
     st.title("全取引履歴")
     if not df.empty:
         show_df = df.copy()
-        # 日付表示用（エラー回避）
         try:
-            show_df['date'] = pd.to_datetime(show_df['date']).dt.strftime('%Y-%m-%d')
+            # 日付表示用（エラー回避）
+            show_df['date'] = pd.to_datetime(show_df['date'], errors='coerce').dt.strftime('%Y-%m-%d')
         except:
             show_df['date'] = show_df['date'].astype(str)
 
