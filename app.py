@@ -363,7 +363,15 @@ elif page == "manage":
     # --- 株取引データの編集 ---
     with tab1:
         st.subheader("Trades Sheet")
-        # エディタを表示（行の追加・削除も許可）
+        
+        # ★★★ 修正ポイント：ここで強制的に型変換します ★★★
+        if not df_trades.empty:
+            # 日付を日付型に変換
+            df_trades['date'] = pd.to_datetime(df_trades['date'], errors='coerce')
+            # 数値を数値型に変換（念のため）
+            df_trades['price'] = pd.to_numeric(df_trades['price'], errors='coerce').fillna(0)
+            df_trades['qty'] = pd.to_numeric(df_trades['qty'], errors='coerce').fillna(0)
+
         edited_trades = st.data_editor(
             df_trades,
             num_rows="dynamic",
@@ -378,8 +386,8 @@ elif page == "manage":
         
         if st.button("株データをスプレッドシートに保存", type="primary", key="save_trades"):
             try:
-                # 日付データの型崩れを防ぐため整形
                 save_df = edited_trades.copy()
+                # 保存時は文字列（YYYY-MM-DD）に戻す
                 save_df['date'] = pd.to_datetime(save_df['date']).dt.strftime('%Y-%m-%d')
                 
                 conn.update(worksheet="trades", data=save_df)
@@ -389,10 +397,17 @@ elif page == "manage":
             except Exception as e:
                 st.error(f"保存エラー: {e}")
 
-    # --- 入出金・投信データの編集（★今回のミスはここ！） ---
+    # --- 入出金・投信データの編集 ---
     with tab2:
         st.subheader("Balance Sheet (現金・投信)")
-        # エディタを表示
+        
+        # ★★★ 修正ポイント：ここでも型変換します ★★★
+        if not df_balance.empty:
+            # 日付を日付型に変換
+            df_balance['date'] = pd.to_datetime(df_balance['date'], errors='coerce')
+            # 金額を数値型に変換
+            df_balance['amount'] = pd.to_numeric(df_balance['amount'], errors='coerce').fillna(0)
+
         edited_balance = st.data_editor(
             df_balance,
             num_rows="dynamic",
@@ -416,6 +431,7 @@ elif page == "manage":
                 st.rerun()
             except Exception as e:
                 st.error(f"保存エラー: {e}")
+
 
 
 
