@@ -33,7 +33,7 @@ st.markdown("""
         padding: 15px;
         border-radius: 10px;
         margin-bottom: 10px;
-        border: 1px solid #3b3d48;
+       
         transition: transform 0.1s, border-color 0.1s;
     }
     /* ホバー時のアクション */
@@ -329,6 +329,7 @@ elif page == "history":
         sdf = df_trades.copy()
         sdf['date'] = pd.to_datetime(sdf['date']).dt.strftime('%Y-%m-%d')
         st.dataframe(sdf[['date', 'ticker', 'name', 'type', 'price', 'qty']].style.apply(lambda r: ['background-color: #3d3300']*6 if r['ticker'] in active_holdings else ['']*6, axis=1), use_container_width=True)
+
 
 
 
