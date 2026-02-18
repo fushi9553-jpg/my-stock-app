@@ -1,0 +1,5 @@
+streamlit
+streamlit-gsheets-connection
+yfinance
+pandas
+plotly
