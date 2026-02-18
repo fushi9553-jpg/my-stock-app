@@ -215,11 +215,22 @@ with tab2:
         # 1. 資産推移（累計利益の積み上げ）- 手入力不要！
         df_hist['cumulative_pl'] = df_hist['pl'].cumsum()
         
+       # --- 修正版の該当部分（タブ2：全体成績） ---
         st.subheader("💹 資産(累計利益)の推移")
+        # エラーが出にくいシンプルな書き方に変更
         fig_asset = px.area(df_hist, x='date', y='cumulative_pl', 
                             labels={'cumulative_pl': '累計利益', 'date': '日付'})
-        fig_asset.update_traces(line_color='#2ecc71', fill_color='rgba(46, 204, 113, 0.2)')
-        fig_asset.update_layout(template="plotly_dark", height=350)
+        
+        # 色の設定方法を修正
+        fig_asset.update_traces(
+            line=dict(color='#2ecc71', width=3),
+            fillcolor='rgba(46, 204, 113, 0.2)'
+        )
+        fig_asset.update_layout(
+            template="plotly_dark", 
+            height=350,
+            yaxis=dict(tickformat=",", title="累計損益 (円)")
+        )
         st.plotly_chart(fig_asset, use_container_width=True)
 
         # 2. 月別損益バーチャート
@@ -353,4 +364,5 @@ with tab4:
             return [''] * len(row)
 
         st.dataframe(show_df[cols].style.apply(highlight_active, axis=1), use_container_width=True)
+
 
