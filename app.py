@@ -147,8 +147,8 @@ if "ticker" in st.query_params:
 with st.sidebar:
     st.header("MENU")
     
-    pages = ["assets", "performance", "analysis", "history"]
-    labels = ["💰 資産状況", "📈 全体成績", "📊 個別分析", "📜 売買ログ"]
+    pages = ["assets", "performance", "analysis", "history", "manage"]
+    labels = ["💰 資産状況", "📈 全体成績", "📊 個別分析", "📜 売買ログ", "🔧 データ修正"]
     
     try: current_index = pages.index(st.session_state.page)
     except: current_index = 0
@@ -351,6 +351,72 @@ elif page == "history":
         sdf = df_trades.copy()
         sdf['date'] = pd.to_datetime(sdf['date']).dt.strftime('%Y-%m-%d')
         st.dataframe(sdf[['date', 'ticker', 'name', 'type', 'price', 'qty']].style.apply(lambda r: ['background-color: #3d3300']*6 if r['ticker'] in active_holdings else ['']*6, axis=1), use_container_width=True)
+
+        # ... (既存の elif page == "history": ブロックの後に続けてください)
+
+elif page == "manage":
+    st.title("🔧 Data Management")
+    st.info("セルをダブルクリックして編集し、最後に「保存」ボタンを押してください。行を選択してDeleteキーで削除も可能です。")
+
+    tab1, tab2 = st.tabs(["株取引データ (Trades)", "入出金・投信データ (Balance)"])
+
+    # --- 株取引データの編集 ---
+    with tab1:
+        st.subheader("Trades Sheet")
+        # エディタを表示（行の追加・削除も許可）
+        edited_trades = st.data_editor(
+            df_trades,
+            num_rows="dynamic",
+            use_container_width=True,
+            key="editor_trades",
+            column_config={
+                "date": st.column_config.DateColumn("日付", format="YYYY-MM-DD"),
+                "price": st.column_config.NumberColumn("単価", format="%d円"),
+                "qty": st.column_config.NumberColumn("数量"),
+            }
+        )
+        
+        if st.button("株データをスプレッドシートに保存", type="primary", key="save_trades"):
+            try:
+                # 日付データの型崩れを防ぐため整形
+                save_df = edited_trades.copy()
+                save_df['date'] = pd.to_datetime(save_df['date']).dt.strftime('%Y-%m-%d')
+                
+                conn.update(worksheet="trades", data=save_df)
+                st.toast("株データを更新しました！", icon="✅")
+                st.cache_data.clear()
+                st.rerun()
+            except Exception as e:
+                st.error(f"保存エラー: {e}")
+
+    # --- 入出金・投信データの編集（★今回のミスはここ！） ---
+    with tab2:
+        st.subheader("Balance Sheet (現金・投信)")
+        # エディタを表示
+        edited_balance = st.data_editor(
+            df_balance,
+            num_rows="dynamic",
+            use_container_width=True,
+            key="editor_balance",
+            column_config={
+                "date": st.column_config.DateColumn("日付", format="YYYY-MM-DD"),
+                "amount": st.column_config.NumberColumn("金額", format="%d円"),
+                "type": st.column_config.SelectboxColumn("種別", options=["DEPOSIT", "WITHDRAW", "TRUST"]),
+            }
+        )
+        
+        if st.button("残高データをスプレッドシートに保存", type="primary", key="save_balance"):
+            try:
+                save_df = edited_balance.copy()
+                save_df['date'] = pd.to_datetime(save_df['date']).dt.strftime('%Y-%m-%d')
+                
+                conn.update(worksheet="balance", data=save_df)
+                st.toast("残高データを更新しました！", icon="✅")
+                st.cache_data.clear()
+                st.rerun()
+            except Exception as e:
+                st.error(f"保存エラー: {e}")
+
 
 
 
