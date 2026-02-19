@@ -9,36 +9,6 @@ import requests
 from bs4 import BeautifulSoup
 import re
 
-# --- 投資信託の基準価額をスクレイピングする汎用関数 ---
-@st.cache_data(ttl=3600)  # 1時間に1回だけ取得（サイトへの負荷軽減）
-def get_trust_price(fund_code):
-    """
-    みんかぶの投資信託ページから最新の基準価額を取得する
-    例: fund_code = '0331418A' (オルカン)
-    """
-    url = f"https://itf.minkabu.jp/fund/{fund_code}"
-    # Pythonからの機械的なアクセスだと弾かれることがあるため、ブラウザを装う
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-    
-    try:
-        res = requests.get(url, headers=headers, timeout=5)
-        soup = BeautifulSoup(res.text, 'html.parser')
-        
-        # みんかぶのHTML構造から基準価額の部分を探す（※クラス名はサイトの仕様変更で変わる可能性あり）
-        # <div class="stock_price">12,345円</div> のような部分を狙い撃ち
-        price_elem = soup.select_one('.stock_price')
-        
-        if price_elem:
-            # 「28,540円」のような文字列から、数字だけを抽出して数値(float)に変換する
-            price_str = re.sub(r'[^\d]', '', price_elem.text)
-            return float(price_str)
-        else:
-            return None
-            
-    except Exception as e:
-        # 通信エラーなどの場合はNoneを返す
-        st.error(f"投資信託データの取得に失敗しました: {e}")
-        return None
 # 1. ページ設定
 st.set_page_config(page_title="My Portfolio App", layout="wide", initial_sidebar_state="collapsed")
 
@@ -92,10 +62,6 @@ try:
 except:
     if 'target_amount' not in st.session_state:
         st.session_state.target_amount = 1000000.0
-
-import requests
-from bs4 import BeautifulSoup
-import re
 
 # --- 3. ロジック類 ---
 def calculate_assets(balance_data):
@@ -171,6 +137,7 @@ def get_asset_info(ticker):
         except:
             return None, 0, 0
     else:
+        # それ以外は個別株と判定してyfinanceを使用
         try:
             s = yf.Ticker(ticker_str)
             hist = s.history(period="2d")
@@ -179,26 +146,6 @@ def get_asset_info(ticker):
             prev = hist['Close'].iloc[0] if len(hist)>1 else curr
             return curr, curr-prev, ((curr-prev)/prev)*100
         except: return None, 0, 0
-else:
-     current_cash = base_cash
-
-@st.cache_data(ttl=600)
-def get_stock_info(ticker):
-    try:
-        s = yf.Ticker(ticker)
-        hist = s.history(period="2d")
-        if hist.empty: return None, 0, 0
-        curr = hist['Close'].iloc[-1]
-        prev = hist['Close'].iloc[0] if len(hist)>1 else curr
-        return curr, curr-prev, ((curr-prev)/prev)*100
-    except: return None, 0, 0
-
-# --- 4. サイドバー ---
-# URLパラメータ検知（クリック遷移）
-if "ticker" in st.query_params:
-    st.session_state.target_ticker = st.query_params["ticker"]
-    st.session_state.page = "analysis"
-    st.query_params.clear()
 
 # --- 4. サイドバー ---
 if "ticker" in st.query_params:
@@ -220,7 +167,6 @@ with st.sidebar:
 
     st.divider()
     
-    # 目標設定の保存
     current_target = st.session_state.target_amount
     new_target = st.number_input("目標資産額 (円)", value=current_target, step=10000.0)
     if new_target != current_target:
@@ -228,7 +174,7 @@ with st.sidebar:
         supabase.table("settings").upsert({"key": "target_amount", "value": str(new_target)}).execute()
         st.toast("目標金額を保存しました！", icon="💾")
     
-# データ入力
+    # データ入力
     with st.expander("📝 データ入力", expanded=False):
         tab1, tab2 = st.tabs(["個別株・投信", "現金"])
         with tab1:
@@ -236,14 +182,11 @@ with st.sidebar:
             with st.form("trade_form", clear_on_submit=True):
                 f_d = st.date_input("日付")
                 asset_type = st.radio("資産の種類", ["個別株", "投資信託"], horizontal=True)
-                
-                # Streamlitの仕様上、form内での動的表示切り替えはできないため汎用入力枠にする
                 st.info("💡 個別株なら「4005.T」、投信なら協会コード「0331418A」等を入力")
                 f_t = st.text_input("コード", "4005.T")
                 f_n = st.text_input("銘柄名・ファンド名") 
                 f_k = st.selectbox("売買", ["IN", "OUT"])
                 f_p = st.number_input("単価・基準価額(円)", 0.0)
-                
                 st.caption("※個別株なら「株数」、投信なら「買付金額 ÷ 基準価額」の数値を入力")
                 f_q = st.number_input("数量 (投信の例: 5万円買付で基準価額2.5万円なら「2」)", 1.0)
                 
@@ -333,69 +276,8 @@ if page == "assets":
         </div>
     </details>
     """, unsafe_allow_html=True)
-# --- 5. メイン画面 ---
-page = st.session_state.page
 
-if page == "assets":
-    st.title("Asset Overview")
-    
-    total_stock_value = 0
-    stock_details = []
-    
-    for ticker, info in active_holdings.items():
-        curr, diff, pct = get_stock_info(ticker)
-        if curr is None: curr = info['total_cost']/info['qty']
-        val = curr * info['qty']
-        total_stock_value += val
-        avg = info['total_cost']/info['qty']
-        u_pl = val - info['total_cost']
-        stock_details.append({"ticker": ticker, "name": info['name'], "qty": info['qty'], "avg": avg, "curr": curr, "u_pl": u_pl, "val": val, "diff": diff, "pct": pct})
-
-    target_val = st.session_state.target_amount
-    total_assets = current_cash + current_trust + total_stock_value
-    
-    p_stock = min(total_stock_value / target_val, 1.0) * 100
-    p_trust = min(current_trust / target_val, 1.0) * 100
-    p_cash = min(current_cash / target_val, 1.0) * 100
-    p_total = min(total_assets / target_val, 1.0) * 100
-    
-    st.write(f"**目標達成率: {p_total:.1f}%** (目標: {target_val:,.0f}円)")
-    
-    st.markdown(f"""
-    <div style="position: relative; height: 32px; width: 100%; background-color: #3b3d48; border-radius: 16px; overflow: hidden; margin-bottom: 10px;">
-        <div style="display: flex; height: 100%; width: 100%;">
-            <div style="width: {p_stock}%; background-color: #ff4b4b;" title="株"></div>
-            <div style="width: {p_trust}%; background-color: #2ecc71;" title="投信"></div>
-            <div style="width: {p_cash}%; background-color: #00d1ff;" title="現金"></div>
-        </div>
-        <div style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 15px; text-shadow: 1px 1px 3px rgba(0,0,0,0.9); pointer-events: none;">
-            現在: {total_assets:,.0f} 円
-        </div>
-    </div>
-    
-    <details style="font-size:14px; color:#bdc3c7; margin-bottom:20px; background-color: #262730; padding: 12px; border-radius: 10px; border: 1px solid #3b3d48;">
-        <summary style="cursor: pointer; outline: none; font-weight: bold; display: flex; justify-content: space-between; align-items: center;">
-            <span>📊 資産の内訳を見る</span>
-            <span style="font-size: 12px; color: #e74c3c;">目標まであと: {target_val - total_assets:,.0f}円</span>
-        </summary>
-        <div style="display:flex; flex-direction: column; gap:8px; margin-top:12px; padding-top: 12px; border-top: 1px solid #3b3d48;">
-            <div style="display:flex; justify-content:space-between;">
-                <span style="color:#ff4b4b;">■ 国内株</span>
-                <span style="color:white; font-weight:bold;">{total_stock_value:,.0f} 円</span>
-            </div>
-            <div style="display:flex; justify-content:space-between;">
-                <span style="color:#2ecc71;">■ 投資信託</span>
-                <span style="color:white; font-weight:bold;">{current_trust:,.0f} 円</span>
-            </div>
-            <div style="display:flex; justify-content:space-between;">
-                <span style="color:#00d1ff;">■ 現金余力</span>
-                <span style="color:white; font-weight:bold;">{current_cash:,.0f} 円</span>
-            </div>
-        </div>
-    </details>
-    """, unsafe_allow_html=True)
-
-c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("総資産", f"{total_assets:,.0f}円")
     c2.metric("国内株", f"{total_stock_value:,.0f}円")
     c3.metric("投資信託", f"{total_trust_value:,.0f}円")
@@ -429,7 +311,7 @@ c1, c2, c3, c4 = st.columns(4)
                 </div>
                 <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-top: 4px;">
                     <div style="font-size:12px; color:#8b949e; line-height:1.5;">
-                        <div>取得単価: {s['avg']:,.0f}円 × {s['qty']:,}株</div>
+                        <div>取得単価: {s['avg']:,.0f}円 × {s['qty']:,}株(万口)</div>
                         <div>評価額: <span style="color:#FAFAFA;">{s['val']:,.0f}円</span></div>
                     </div>
                     <div style="background-color: {u_bg}; color:{u_color}; padding: 4px 12px; border-radius: 6px; font-weight:bold; font-size:16px; border: 1px solid {u_color}40;">
@@ -452,8 +334,6 @@ elif page == "performance":
         df_h = pd.DataFrame(history_data).sort_values('date')
         df_h['cum_pl'] = df_h['pl'].cumsum()
         fig_a = px.area(df_h, x='date', y='cum_pl')
-        
-        # TradingView風の青色設定
         fig_a.update_traces(line=dict(color='#2962FF', width=2), fillcolor='rgba(41, 98, 255, 0.1)')
         fig_a.update_layout(
             template="plotly_dark", 
@@ -486,27 +366,22 @@ elif page == "analysis":
             if not data.empty:
                 data = data.reset_index()
                 if isinstance(data.columns, pd.MultiIndex): data.columns = data.columns.get_level_values(0)
-# 25日移動平均線の計算を追加
+                
                 data['25MA'] = data['Close'].rolling(window=25).mean()
 
                 fig = go.Figure()
-                
-                # ローソク足（TradingViewカラー）
                 fig.add_trace(go.Candlestick(
                     x=data['Date'], open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'], 
                     increasing_line_color='#089981', decreasing_line_color='#F23645', name="Price"
                 ))
-                
-                # 25日移動平均線（青色）
                 fig.add_trace(go.Scatter(
                     x=data['Date'], y=data['25MA'], mode='lines', 
                     name='25日移動平均', line=dict(color='#2962FF', width=1.5), hoverinfo='skip'
                 ))
 
-                # 売買マーカーの追加（元のロジックを維持）
                 t_d = df_trades[df_trades['ticker'] == tk]
                 for _, r in t_d.iterrows():
-                    color = "#089981" if r['type']=="IN" else "#F23645" # マーカーの色も合わせる
+                    color = "#089981" if r['type']=="IN" else "#F23645"
                     marker = "triangle-up" if r['type']=="IN" else "triangle-down"
                     fig.add_trace(go.Scatter(
                         x=[r['date']], y=[r['price']], mode="markers", 
@@ -514,19 +389,18 @@ elif page == "analysis":
                         name=r['type'], hovertext=f"{r['type']}<br>{r['date']}<br>{r['price']}円"
                     ))
                 
-                # TradingView風のレイアウト設定
                 fig.update_layout(
                     template="plotly_dark", 
-                    plot_bgcolor='#131722',  # 背景色
+                    plot_bgcolor='#131722',
                     paper_bgcolor='#131722',
                     height=500, 
                     hovermode="x unified", 
                     dragmode="pan", 
                     xaxis=dict(
-                        rangeslider=dict(visible=False), # 下のスライダーを消して広く使う
+                        rangeslider=dict(visible=False),
                         type='date', rangebreaks=[dict(bounds=["sat", "mon"])], 
                         tickformat="%Y/%m/%d", spikethickness=1, showspikes=True,
-                        showgrid=True, gridcolor='#2B2B43' # 暗めのグリッド線
+                        showgrid=True, gridcolor='#2B2B43'
                     ), 
                     yaxis=dict(
                         fixedrange=False, tickformat=",", side="right", 
@@ -535,10 +409,8 @@ elif page == "analysis":
                     ), 
                     margin=dict(l=10, r=50, t=10, b=10), 
                     modebar=dict(remove=['zoom', 'select', 'lasso', 'autoScale']),
-                    showlegend=False # 凡例を隠してスッキリさせる
+                    showlegend=False
                 )
-                fig.update_xaxes(fixedrange=False)
-                fig.update_yaxes(fixedrange=False)
                 st.plotly_chart(fig, use_container_width=True)
         except Exception as e: st.error(f"Error: {e}")
 
@@ -549,23 +421,16 @@ elif page == "history":
         sdf['date'] = pd.to_datetime(sdf['date']).dt.strftime('%Y-%m-%d')
         st.dataframe(sdf[['date', 'ticker', 'name', 'type', 'price', 'qty']].style.apply(lambda r: ['background-color: #3d3300']*6 if r['ticker'] in active_holdings else ['']*6, axis=1), use_container_width=True)
 
-        # ... (既存の elif page == "history": ブロックの後に続けてください)
-
 elif page == "manage":
     st.title("🔧 Data Management")
     st.info("セルをダブルクリックして編集し、最後に「保存」ボタンを押してください。行を選択してDeleteキーで削除も可能です。")
 
-    tab1, tab2 = st.tabs(["株取引データ (Trades)", "入出金・投信データ (Balance)"])
+    tab1, tab2 = st.tabs(["株取引データ (Trades)", "入出金データ (Balance)"])
 
-    # --- 株取引データの編集 ---
     with tab1:
         st.subheader("Trades Sheet")
-        
-        # ★★★ 修正ポイント：ここで強制的に型変換します ★★★
         if not df_trades.empty:
-            # 日付を日付型に変換
             df_trades['date'] = pd.to_datetime(df_trades['date'], errors='coerce')
-            # 数値を数値型に変換（念のため）
             df_trades['price'] = pd.to_numeric(df_trades['price'], errors='coerce').fillna(0)
             df_trades['qty'] = pd.to_numeric(df_trades['qty'], errors='coerce').fillna(0)
 
@@ -581,28 +446,26 @@ elif page == "manage":
             }
         )
         
-        if st.button("株データをスプレッドシートに保存", type="primary", key="save_trades"):
+        if st.button("株データを保存", type="primary", key="save_trades"):
             try:
                 save_df = edited_trades.copy()
-                # 保存時は文字列（YYYY-MM-DD）に戻す
                 save_df['date'] = pd.to_datetime(save_df['date']).dt.strftime('%Y-%m-%d')
                 
-                conn.update(worksheet="trades", data=save_df)
+                # Supabaseのテーブルを一旦全て削除して再挿入 (簡易的な全更新)
+                supabase.table("trades").delete().neq("id", 0).execute()
+                records = save_df.drop(columns=['id'], errors='ignore').to_dict('records')
+                if records: supabase.table("trades").insert(records).execute()
+                
                 st.toast("株データを更新しました！", icon="✅")
                 st.cache_data.clear()
                 st.rerun()
             except Exception as e:
                 st.error(f"保存エラー: {e}")
 
-    # --- 入出金・投信データの編集 ---
     with tab2:
-        st.subheader("Balance Sheet (現金・投信)")
-        
-        # ★★★ 修正ポイント：ここでも型変換します ★★★
+        st.subheader("Balance Sheet (現金)")
         if not df_balance.empty:
-            # 日付を日付型に変換
             df_balance['date'] = pd.to_datetime(df_balance['date'], errors='coerce')
-            # 金額を数値型に変換
             df_balance['amount'] = pd.to_numeric(df_balance['amount'], errors='coerce').fillna(0)
 
         edited_balance = st.data_editor(
@@ -613,16 +476,19 @@ elif page == "manage":
             column_config={
                 "date": st.column_config.DateColumn("日付", format="YYYY-MM-DD"),
                 "amount": st.column_config.NumberColumn("金額", format="%d円"),
-                "type": st.column_config.SelectboxColumn("種別", options=["DEPOSIT", "WITHDRAW", "TRUST"]),
+                "type": st.column_config.SelectboxColumn("種別", options=["DEPOSIT", "WITHDRAW"]),
             }
         )
         
-        if st.button("残高データをスプレッドシートに保存", type="primary", key="save_balance"):
+        if st.button("残高データを保存", type="primary", key="save_balance"):
             try:
                 save_df = edited_balance.copy()
                 save_df['date'] = pd.to_datetime(save_df['date']).dt.strftime('%Y-%m-%d')
                 
-                conn.update(worksheet="balance", data=save_df)
+                supabase.table("balance").delete().neq("id", 0).execute()
+                records = save_df.drop(columns=['id'], errors='ignore').to_dict('records')
+                if records: supabase.table("balance").insert(records).execute()
+                
                 st.toast("残高データを更新しました！", icon="✅")
                 st.cache_data.clear()
                 st.rerun()
