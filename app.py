@@ -282,7 +282,7 @@ if page == "assets":
     if not stock_details: st.info("保有なし")
     
 for s in stock_details:
-        # TradingView風のカラーに統一（グリーンとレッド）
+        # TradingView風のカラーに統一
         u_color = "#089981" if s['u_pl'] >= 0 else "#F23645"
         u_sign = "+" if s['u_pl'] > 0 else ""
         u_bg = "rgba(8, 153, 129, 0.15)" if s['u_pl'] >= 0 else "rgba(242, 54, 69, 0.15)"
@@ -321,6 +321,7 @@ for s in stock_details:
 
         st.markdown(card_html, unsafe_allow_html=True)
 
+# ↑のループが終わった後、elif は一番左端（スペースなし）に配置します
 elif page == "performance":
     st.title("Performance")
     c1, c2, c3 = st.columns(3)
@@ -507,6 +508,7 @@ elif page == "manage":
                 st.rerun()
             except Exception as e:
                 st.error(f"保存エラー: {e}")
+
 
 
 
