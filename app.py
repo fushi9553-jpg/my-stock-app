@@ -293,33 +293,31 @@ if page == "assets":
 
         link_url = f"?ticker={s['ticker']}"
 
-        # CSSで a { text-decoration: none } を指定したので、青線は消えます
-        card_html = f"""
-        <a href="{link_url}" target="_self">
-            <div class="stock-card" style="display: flex; flex-direction: column; gap: 8px;">
-                <div style="display:flex; justify-content:space-between; align-items:flex-start;">
-                    <div style="display:flex; flex-direction:column;">
-                        <span style="font-size:18px; font-weight:bold; color:#FAFAFA; line-height:1.2;">{s['name']}</span>
-                        <span style="font-size:13px; color:#8b949e;">{s['ticker']}</span>
-                    </div>
-                    <div style="text-align:right;">
-                        <div style="font-size:18px; font-weight:bold; color:#FAFAFA; line-height:1.2;">{s['curr']:,.0f} <span style="font-size:14px; font-weight:normal; color:#8b949e;">円</span></div>
-                        <div style="font-size:13px; color:{d_color}; font-weight:500;">{d_sign}{s['diff']:,.0f} ({d_sign}{s['pct']:.2f}%)</div>
-                    </div>
-                </div>
-                
-                <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-top: 4px;">
-                    <div style="font-size:12px; color:#8b949e; line-height:1.5;">
-                        <div>取得単価: {s['avg']:,.0f}円 × {s['qty']:,}株</div>
-                        <div>評価額: <span style="color:#FAFAFA;">{s['val']:,.0f}円</span></div>
-                    </div>
-                    <div style="background-color: {u_bg}; color:{u_color}; padding: 4px 12px; border-radius: 6px; font-weight:bold; font-size:16px; border: 1px solid {u_color}40;">
-                        {u_sign}{s['u_pl']:,.0f} 円
-                    </div>
-                </div>
-            </div>
-        </a>
-        """
+
+        card_html = f"""<a href="{link_url}" target="_self">
+<div class="stock-card" style="display: flex; flex-direction: column; gap: 8px;">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+        <div style="display:flex; flex-direction:column;">
+            <span style="font-size:18px; font-weight:bold; color:#FAFAFA; line-height:1.2;">{s['name']}</span>
+            <span style="font-size:13px; color:#8b949e;">{s['ticker']}</span>
+        </div>
+        <div style="text-align:right;">
+            <div style="font-size:18px; font-weight:bold; color:#FAFAFA; line-height:1.2;">{s['curr']:,.0f} <span style="font-size:14px; font-weight:normal; color:#8b949e;">円</span></div>
+            <div style="font-size:13px; color:{d_color}; font-weight:500;">{d_sign}{s['diff']:,.0f} ({d_sign}{s['pct']:.2f}%)</div>
+        </div>
+    </div>
+    
+    <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-top: 4px;">
+        <div style="font-size:12px; color:#8b949e; line-height:1.5;">
+            <div>取得単価: {s['avg']:,.0f}円 × {s['qty']:,}株</div>
+            <div>評価額: <span style="color:#FAFAFA;">{s['val']:,.0f}円</span></div>
+        </div>
+        <div style="background-color: {u_bg}; color:{u_color}; padding: 4px 12px; border-radius: 6px; font-weight:bold; font-size:16px; border: 1px solid {u_color}40;">
+            {u_sign}{s['u_pl']:,.0f} 円
+        </div>
+    </div>
+</div>
+</a>"""
         st.markdown(card_html, unsafe_allow_html=True)
 
 elif page == "performance":
@@ -508,6 +506,7 @@ elif page == "manage":
                 st.rerun()
             except Exception as e:
                 st.error(f"保存エラー: {e}")
+
 
 
 
