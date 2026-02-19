@@ -294,7 +294,8 @@ if page == "assets":
         link_url = f"?ticker={s['ticker']}"
 
 
-    card_html = f"""<a href="{link_url}" target="_self">
+# HTMLの左端のスペースを削ることで、コードブロックとして誤認識されるのを防ぎます
+        card_html = f"""<a href="{link_url}" target="_self">
 <div class="stock-card" style="display: flex; flex-direction: column; gap: 8px;">
     <div style="display:flex; justify-content:space-between; align-items:flex-start;">
         <div style="display:flex; flex-direction:column;">
@@ -318,7 +319,7 @@ if page == "assets":
     </div>
 </div>
 </a>"""
-    st.markdown(card_html, unsafe_allow_html=True)
+        st.markdown(card_html, unsafe_allow_html=True)
 
 elif page == "performance":
     st.title("Performance")
@@ -506,6 +507,7 @@ elif page == "manage":
                 st.rerun()
             except Exception as e:
                 st.error(f"保存エラー: {e}")
+
 
 
 
