@@ -277,12 +277,6 @@ if page == "assets":
     </details>
     """, unsafe_allow_html=True)
 
-    # ★★★ ここでカードを4つに分割 ★★★
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("総資産", f"{total_assets:,.0f}円")
-    c2.metric("国内株", f"{total_stock_value:,.0f}円")
-    c3.metric("投資信託", f"{current_trust:,.0f}円")
-    c4.metric("現金余力", f"{current_cash:,.0f}円")
 
     st.subheader("保有銘柄")
     if not stock_details: st.info("保有なし")
@@ -507,6 +501,7 @@ elif page == "manage":
                 st.rerun()
             except Exception as e:
                 st.error(f"保存エラー: {e}")
+
 
 
 
