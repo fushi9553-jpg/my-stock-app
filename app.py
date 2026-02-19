@@ -310,7 +310,7 @@ elif page == "performance":
         df_h = pd.DataFrame(history_data).sort_values('date')
         df_h['cum_pl'] = df_h['pl'].cumsum()
         fig_a = px.area(df_h, x='date', y='cum_pl')
-       fig_a.update_traces(line=dict(color='#2962FF', width=2), fillcolor='rgba(41, 98, 255, 0.1)') # 爽やかなブルーに変更
+       fig_a.update_traces(line=dict(color='#2962FF', width=2), fillcolor='rgba(41, 98, 255, 0.1)') 
         fig_a.update_layout(
             template="plotly_dark", 
             plot_bgcolor='#131722',  # 背景をTradingViewのダークカラーに
@@ -484,6 +484,7 @@ elif page == "manage":
                 st.rerun()
             except Exception as e:
                 st.error(f"保存エラー: {e}")
+
 
 
 
