@@ -1,5 +1,5 @@
 import streamlit as st
-from streamlit_gsheets import GSheetsConnection
+from supabase import create_client, Client
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
@@ -9,66 +9,50 @@ from datetime import datetime
 # 1. ページ設定
 st.set_page_config(page_title="My Portfolio App", layout="wide", initial_sidebar_state="collapsed")
 
-# --- セッション状態の初期化 ---
 if 'page' not in st.session_state: st.session_state.page = "assets"
 if 'target_ticker' not in st.session_state: st.session_state.target_ticker = None
-# 目標金額は後でロードするので初期値は仮置き
 
-# ★★★ CSSデザイン（青線削除・カード分離） ★★★
+# ★★★ CSSデザイン ★★★
 st.markdown("""
     <style>
     .main { background-color: #0e1117; color: white; }
-    
-    /* リンクの青線・下線を強制的に消す */
     a { text-decoration: none !important; color: inherit !important; }
     a:hover { text-decoration: none !important; color: inherit !important; }
-    
-    /* カードのデザイン */
-    .stock-card {
-        background-color: #262730;
-        padding: 15px;
-        border-radius: 10px;
-        margin-bottom: 10px;
-        border: 1px solid #3b3d48;
-        transition: transform 0.1s, border-color 0.1s;
-        color: white; /* 文字色を白で固定 */
-        text-decoration: none; /* 下線を消す */
-    }
-    .stock-card:hover {
-        border-color: #2ecc71;
-        transform: translateY(-2px);
-        cursor: pointer;
-    }
-
-    /* メトリック（上部の数字カード）のデザイン */
-    .stMetric {
-        background-color: #262730;
-        padding: 15px;
-        border-radius: 8px;
-        border-left: 5px solid #2ecc71;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-    }
+    .stock-card { background-color: #262730; padding: 15px; border-radius: 10px; margin-bottom: 10px; border: 1px solid #3b3d48; transition: transform 0.1s, border-color 0.1s; color: white; text-decoration: none; }
+    .stock-card:hover { border-color: #2ecc71; transform: translateY(-2px); cursor: pointer; }
+    .stMetric { background-color: #262730; padding: 15px; border-radius: 8px; border-left: 5px solid #2ecc71; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. データ読み込み ---
-conn = st.connection("gsheets", type=GSheetsConnection)
+# --- 2. データベース接続 (Supabase) ---
+@st.cache_resource
+def init_connection():
+    url = st.secrets["supabase"]["url"]
+    key = st.secrets["supabase"]["key"]
+    return create_client(url, key)
 
-@st.cache_data(ttl=600)
+supabase: Client = init_connection()
+
+@st.cache_data(ttl=60)
 def load_data():
     try:
-        df_t = conn.read(worksheet="trades", ttl=0)
-        try: df_b = conn.read(worksheet="balance", ttl=0)
-        except: df_b = pd.DataFrame(columns=['date', 'type', 'amount', 'memo'])
-        try: df_s = conn.read(worksheet="settings", ttl=0)
-        except: df_s = pd.DataFrame(columns=['key', 'value'])
+        t_res = supabase.table("trades").select("*").execute()
+        df_t = pd.DataFrame(t_res.data) if t_res.data else pd.DataFrame(columns=['id', 'date', 'ticker', 'name', 'type', 'price', 'qty'])
+        
+        b_res = supabase.table("balance").select("*").execute()
+        df_b = pd.DataFrame(b_res.data) if b_res.data else pd.DataFrame(columns=['id', 'date', 'type', 'amount', 'memo'])
+        
+        s_res = supabase.table("settings").select("*").execute()
+        df_s = pd.DataFrame(s_res.data) if s_res.data else pd.DataFrame(columns=['key', 'value'])
+        
         return df_t, df_b, df_s
     except Exception as e:
+        st.error(f"DBエラー: {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 df_trades, df_balance, df_settings = load_data()
 
-# 目標金額の取得（設定シートから）
+# 目標金額の取得
 try:
     saved_target = df_settings[df_settings['key'] == 'target_amount']['value'].iloc[0]
     st.session_state.target_amount = float(saved_target)
@@ -80,11 +64,9 @@ except:
 def calculate_assets(balance_data):
     if balance_data.empty: return 0, 0
     balance_data['amount'] = pd.to_numeric(balance_data['amount'], errors='coerce').fillna(0)
-    
     deposits = balance_data[balance_data['type'] == 'DEPOSIT']['amount'].sum()
     withdrawals = balance_data[balance_data['type'] == 'WITHDRAW']['amount'].sum()
     cash = deposits - withdrawals
-    
     trust_data = balance_data[balance_data['type'] == 'TRUST'].sort_values('date')
     current_trust = trust_data.iloc[-1]['amount'] if not trust_data.empty else 0
     return cash, current_trust
@@ -126,17 +108,11 @@ def process_data(data):
 active_holdings, history_data, global_stats = process_data(df_trades)
 base_cash, current_trust = calculate_assets(df_balance)
 
-# ★★★ 修正ポイント：株の売買による現金の増減を計算して反映 ★★★
 if not df_trades.empty:
-    # エラー防止のため数値型に変換
     df_trades['price'] = pd.to_numeric(df_trades['price'], errors='coerce').fillna(0)
     df_trades['qty'] = pd.to_numeric(df_trades['qty'], errors='coerce').fillna(0)
-    
-    # IN（買い）で使った金額、OUT（売り）で得た金額を計算
     spent = df_trades[df_trades['type'] == 'IN'].apply(lambda r: r['price'] * r['qty'], axis=1).sum()
     gained = df_trades[df_trades['type'] == 'OUT'].apply(lambda r: r['price'] * r['qty'], axis=1).sum()
-    
-    # 最終的な現金余力 ＝ (入金-出金) － 買った株の代金 ＋ 売った株の代金
     current_cash = base_cash - spent + gained
 else:
     current_cash = base_cash
@@ -525,6 +501,7 @@ elif page == "manage":
                 st.rerun()
             except Exception as e:
                 st.error(f"保存エラー: {e}")
+
 
 
 
