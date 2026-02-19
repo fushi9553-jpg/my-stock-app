@@ -135,16 +135,19 @@ if "ticker" in st.query_params:
     st.session_state.page = "analysis"
     st.query_params.clear()
 
+# --- 4. サイドバー ---
+if "ticker" in st.query_params:
+    st.session_state.target_ticker = st.query_params["ticker"]
+    st.session_state.page = "analysis"
+    st.query_params.clear()
+
 with st.sidebar:
     st.header("MENU")
-    
     pages = ["assets", "performance", "analysis", "history", "manage"]
     labels = ["💰 資産状況", "📈 全体成績", "📊 個別分析", "📜 売買ログ", "🔧 データ修正"]
-    
     try: current_index = pages.index(st.session_state.page)
     except: current_index = 0
     selected_label = st.radio("Go to", labels, index=current_index)
-    
     new_page = pages[labels.index(selected_label)]
     if st.session_state.page != new_page:
         st.session_state.page = new_page
@@ -152,19 +155,15 @@ with st.sidebar:
 
     st.divider()
     
-    # 目標設定（DB保存機能付き）
+    # 目標設定の保存
     current_target = st.session_state.target_amount
     new_target = st.number_input("目標資産額 (円)", value=current_target, step=10000.0)
-    
-    # 値が変わっていたらスプレッドシートを更新
     if new_target != current_target:
         st.session_state.target_amount = new_target
-        # settingsシートを更新
-        new_settings = pd.DataFrame([{'key': 'target_amount', 'value': new_target}])
-        conn.update(worksheet="settings", data=new_settings)
+        supabase.table("settings").upsert({"key": "target_amount", "value": str(new_target)}).execute()
         st.toast("目標金額を保存しました！", icon="💾")
     
-    # データ入力
+    # データ入力（SupabaseへのInsert処理）
     with st.expander("📝 データ入力", expanded=False):
         tab1, tab2, tab3 = st.tabs(["株", "現金", "投信"])
         with tab1:
@@ -176,36 +175,30 @@ with st.sidebar:
                 f_p = st.number_input("単価", 0.0)
                 f_q = st.number_input("数量", 100)
                 if st.form_submit_button("株 保存"):
-                    nd = pd.DataFrame([{"date": f_d, "ticker": f_t, "name": f_n, "type": f_k, "price": f_p, "qty": f_q}])
-                    conn.update(worksheet="trades", data=pd.concat([df_trades, nd], ignore_index=True))
+                    supabase.table("trades").insert({"date": str(f_d), "ticker": f_t, "name": f_n, "type": f_k, "price": f_p, "qty": f_q}).execute()
                     st.cache_data.clear()
                     st.success("完了")
                     st.rerun()
         with tab2:
-            st.caption("入出金を記録")
             with st.form("cash_form", clear_on_submit=True):
                 c_d = st.date_input("日付")
                 c_k = st.selectbox("種別", ["DEPOSIT", "WITHDRAW"], format_func=lambda x: "入金" if x=="DEPOSIT" else "出金")
                 c_a = st.number_input("金額", 0)
                 c_m = st.text_input("メモ")
                 if st.form_submit_button("現金 保存"):
-                    nb = pd.DataFrame([{"date": c_d, "type": c_k, "amount": c_a, "memo": c_m}])
-                    conn.update(worksheet="balance", data=pd.concat([df_balance, nb], ignore_index=True))
+                    supabase.table("balance").insert({"date": str(c_d), "type": c_k, "amount": c_a, "memo": c_m}).execute()
                     st.cache_data.clear()
                     st.success("完了")
                     st.rerun()
         with tab3:
-            st.caption("現在の評価額を入力")
             with st.form("trust_form", clear_on_submit=True):
                 t_d = st.date_input("日付")
                 t_a = st.number_input("現在の評価額合計", 0)
                 if st.form_submit_button("投信 更新"):
-                    nb = pd.DataFrame([{"date": t_d, "type": "TRUST", "amount": t_a, "memo": "残高更新"}])
-                    conn.update(worksheet="balance", data=pd.concat([df_balance, nb], ignore_index=True))
+                    supabase.table("balance").insert({"date": str(t_d), "type": "TRUST", "amount": t_a, "memo": "残高更新"}).execute()
                     st.cache_data.clear()
                     st.success("完了")
                     st.rerun()
-
 # --- 5. メイン画面 ---
 page = st.session_state.page
 
@@ -501,6 +494,7 @@ elif page == "manage":
                 st.rerun()
             except Exception as e:
                 st.error(f"保存エラー: {e}")
+
 
 
 
