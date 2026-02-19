@@ -7,24 +7,37 @@ import plotly.express as px
 from datetime import datetime
 import requests
 from bs4 import BeautifulSoup
+import re
 
-# --- 投資信託の基準価額をスクレイピングする関数 ---
-@st.cache_data(ttl=3600)  # 毎回通信すると重い＆サイトに負荷がかかるため、1時間に1回だけ取得
+# --- 投資信託の基準価額をスクレイピングする汎用関数 ---
+@st.cache_data(ttl=3600)  # 1時間に1回だけ取得（サイトへの負荷軽減）
 def get_trust_price(fund_code):
-    # 日本の金融サイト（Yahooファイナンス等）の専用ページを指定
-    target = f"https://finance.yahoo.co.jp/quote/{fund_code}"
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    """
+    みんかぶの投資信託ページから最新の基準価額を取得する
+    例: fund_code = '0331418A' (オルカン)
+    """
+    url = f"https://itf.minkabu.jp/fund/{fund_code}"
+    # Pythonからの機械的なアクセスだと弾かれることがあるため、ブラウザを装う
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     
     try:
-        # サイトにアクセスしてHTMLを取得
-        res = requests.get(target, headers=headers)
+        res = requests.get(url, headers=headers, timeout=5)
         soup = BeautifulSoup(res.text, 'html.parser')
         
-        # ！！！ここにウェブサイトから「基準価額」の数字だけをピンポイントで抜き出す処理を書きます！！！
-        # （銘柄によって取得元のURLやHTMLの構造が変わるため、あとで完成させます）
+        # みんかぶのHTML構造から基準価額の部分を探す（※クラス名はサイトの仕様変更で変わる可能性あり）
+        # <div class="stock_price">12,345円</div> のような部分を狙い撃ち
+        price_elem = soup.select_one('.stock_price')
         
-        return 0 # 仮置き
+        if price_elem:
+            # 「28,540円」のような文字列から、数字だけを抽出して数値(float)に変換する
+            price_str = re.sub(r'[^\d]', '', price_elem.text)
+            return float(price_str)
+        else:
+            return None
+            
     except Exception as e:
+        # 通信エラーなどの場合はNoneを返す
+        st.error(f"投資信託データの取得に失敗しました: {e}")
         return None
 # 1. ページ設定
 st.set_page_config(page_title="My Portfolio App", layout="wide", initial_sidebar_state="collapsed")
@@ -514,6 +527,7 @@ elif page == "manage":
                 st.rerun()
             except Exception as e:
                 st.error(f"保存エラー: {e}")
+
 
 
 
