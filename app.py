@@ -278,7 +278,7 @@ if page == "assets":
     """, unsafe_allow_html=True)
 
 
-st.subheader("保有銘柄")
+    st.subheader("保有銘柄")
     if not stock_details: st.info("保有なし")
     
     for s in stock_details:
@@ -508,6 +508,7 @@ elif page == "manage":
                 st.rerun()
             except Exception as e:
                 st.error(f"保存エラー: {e}")
+
 
 
 
