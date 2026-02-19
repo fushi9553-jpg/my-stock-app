@@ -277,12 +277,16 @@ if page == "assets":
     </details>
     """, unsafe_allow_html=True)
 
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("総資産", f"{total_assets:,.0f}円")
+    c2.metric("国内株", f"{total_stock_value:,.0f}円")
+    c3.metric("投資信託", f"{current_trust:,.0f}円")
+    c4.metric("現金余力", f"{current_cash:,.0f}円")
 
     st.subheader("保有銘柄")
     if not stock_details: st.info("保有なし")
     
-for s in stock_details:
-        # TradingView風のカラーに統一
+    for s in stock_details:
         u_color = "#089981" if s['u_pl'] >= 0 else "#F23645"
         u_sign = "+" if s['u_pl'] > 0 else ""
         u_bg = "rgba(8, 153, 129, 0.15)" if s['u_pl'] >= 0 else "rgba(242, 54, 69, 0.15)"
@@ -292,7 +296,6 @@ for s in stock_details:
 
         link_url = f"?ticker={s['ticker']}"
 
-        # 最後に .replace('\n', '') をつけて改行を完全に消し去る
         card_html = f"""
         <a href="{link_url}" target="_self">
             <div class="stock-card" style="display: flex; flex-direction: column; gap: 8px;">
@@ -321,7 +324,6 @@ for s in stock_details:
 
         st.markdown(card_html, unsafe_allow_html=True)
 
-# ↑のループが終わった後、elif は一番左端（スペースなし）に配置します
 elif page == "performance":
     st.title("Performance")
     c1, c2, c3 = st.columns(3)
@@ -508,6 +510,7 @@ elif page == "manage":
                 st.rerun()
             except Exception as e:
                 st.error(f"保存エラー: {e}")
+
 
 
 
