@@ -310,8 +310,17 @@ elif page == "performance":
         df_h = pd.DataFrame(history_data).sort_values('date')
         df_h['cum_pl'] = df_h['pl'].cumsum()
         fig_a = px.area(df_h, x='date', y='cum_pl')
-        fig_a.update_traces(line=dict(color='#2ecc71', width=2), fillcolor='rgba(46, 204, 113, 0.1)')
-        fig_a.update_layout(template="plotly_dark", height=300, hovermode="x unified", xaxis=dict(showgrid=False), yaxis=dict(tickformat=",", title="損益"), margin=dict(l=0, r=0, t=30, b=0))
+       fig_a.update_traces(line=dict(color='#2962FF', width=2), fillcolor='rgba(41, 98, 255, 0.1)') # 爽やかなブルーに変更
+        fig_a.update_layout(
+            template="plotly_dark", 
+            plot_bgcolor='#131722',  # 背景をTradingViewのダークカラーに
+            paper_bgcolor='#131722',
+            height=300, 
+            hovermode="x unified", 
+            xaxis=dict(showgrid=True, gridcolor='#2B2B43'), # 暗めのグリッド線を追加
+            yaxis=dict(showgrid=True, gridcolor='#2B2B43', tickformat=",", title="損益"), 
+            margin=dict(l=0, r=0, t=30, b=0)
+        )
         st.plotly_chart(fig_a, use_container_width=True)
 
 elif page == "analysis":
@@ -431,6 +440,7 @@ elif page == "manage":
                 st.rerun()
             except Exception as e:
                 st.error(f"保存エラー: {e}")
+
 
 
 
