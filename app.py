@@ -93,16 +93,17 @@ except:
     if 'target_amount' not in st.session_state:
         st.session_state.target_amount = 1000000.0
 
+import requests
+from bs4 import BeautifulSoup
+import re
+
 # --- 3. ロジック類 ---
 def calculate_assets(balance_data):
-    if balance_data.empty: return 0, 0
+    if balance_data.empty: return 0
     balance_data['amount'] = pd.to_numeric(balance_data['amount'], errors='coerce').fillna(0)
     deposits = balance_data[balance_data['type'] == 'DEPOSIT']['amount'].sum()
     withdrawals = balance_data[balance_data['type'] == 'WITHDRAW']['amount'].sum()
-    cash = deposits - withdrawals
-    trust_data = balance_data[balance_data['type'] == 'TRUST'].sort_values('date')
-    current_trust = trust_data.iloc[-1]['amount'] if not trust_data.empty else 0
-    return cash, current_trust
+    return deposits - withdrawals
 
 def process_data(data):
     holdings = {}
@@ -139,7 +140,7 @@ def process_data(data):
     return active_holdings, history, stats
 
 active_holdings, history_data, global_stats = process_data(df_trades)
-base_cash, current_trust = calculate_assets(df_balance)
+base_cash = calculate_assets(df_balance)
 
 if not df_trades.empty:
     df_trades['price'] = pd.to_numeric(df_trades['price'], errors='coerce').fillna(0)
@@ -147,6 +148,38 @@ if not df_trades.empty:
     spent = df_trades[df_trades['type'] == 'IN'].apply(lambda r: r['price'] * r['qty'], axis=1).sum()
     gained = df_trades[df_trades['type'] == 'OUT'].apply(lambda r: r['price'] * r['qty'], axis=1).sum()
     current_cash = base_cash - spent + gained
+else:
+    current_cash = base_cash
+
+@st.cache_data(ttl=600)
+def get_asset_info(ticker):
+    """株と投資信託を自動判別して価格を取得する関数"""
+    ticker_str = str(ticker).strip()
+    
+    # 8桁の英数字（ドットなし）なら投資信託と判定してスクレイピング
+    if len(ticker_str) == 8 and '.' not in ticker_str:
+        url = f"https://itf.minkabu.jp/fund/{ticker_str}"
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        try:
+            res = requests.get(url, headers=headers, timeout=5)
+            soup = BeautifulSoup(res.text, 'html.parser')
+            price_elem = soup.select_one('.stock_price')
+            if price_elem:
+                price_str = re.sub(r'[^\d]', '', price_elem.text)
+                return float(price_str), 0, 0.0 # 投信は前日比を一旦0とする
+            return None, 0, 0
+        except:
+            return None, 0, 0
+    else:
+        # それ以外は個別株と判定してyfinanceを使用
+        try:
+            s = yf.Ticker(ticker_str)
+            hist = s.history(period="2d")
+            if hist.empty: return None, 0, 0
+            curr = hist['Close'].iloc[-1]
+            prev = hist['Close'].iloc[0] if len(hist)>1 else curr
+            return curr, curr-prev, ((curr-prev)/prev)*100
+        except: return None, 0, 0
 else:
     current_cash = base_cash
 
@@ -196,23 +229,32 @@ with st.sidebar:
         supabase.table("settings").upsert({"key": "target_amount", "value": str(new_target)}).execute()
         st.toast("目標金額を保存しました！", icon="💾")
     
-    # データ入力（SupabaseへのInsert処理）
+# データ入力
     with st.expander("📝 データ入力", expanded=False):
-        tab1, tab2, tab3 = st.tabs(["株", "現金", "投信"])
+        tab1, tab2 = st.tabs(["個別株・投信", "現金"])
         with tab1:
+            st.caption("個別株も投資信託もここで入力します")
             with st.form("trade_form", clear_on_submit=True):
                 f_d = st.date_input("日付")
-                f_t = st.text_input("コード", "6269.T")
-                f_n = st.text_input("銘柄名") 
+                asset_type = st.radio("資産の種類", ["個別株", "投資信託"], horizontal=True)
+                
+                # Streamlitの仕様上、form内での動的表示切り替えはできないため汎用入力枠にする
+                st.info("💡 個別株なら「4005.T」、投信なら協会コード「0331418A」等を入力")
+                f_t = st.text_input("コード", "4005.T")
+                f_n = st.text_input("銘柄名・ファンド名") 
                 f_k = st.selectbox("売買", ["IN", "OUT"])
-                f_p = st.number_input("単価", 0.0)
-                f_q = st.number_input("数量", 100)
-                if st.form_submit_button("株 保存"):
+                f_p = st.number_input("単価・基準価額(円)", 0.0)
+                
+                st.caption("※個別株なら「株数」、投信なら「買付金額 ÷ 基準価額」の数値を入力")
+                f_q = st.number_input("数量 (投信の例: 5万円買付で基準価額2.5万円なら「2」)", 1.0)
+                
+                if st.form_submit_button("保存"):
                     supabase.table("trades").insert({"date": str(f_d), "ticker": f_t, "name": f_n, "type": f_k, "price": f_p, "qty": f_q}).execute()
                     st.cache_data.clear()
                     st.success("完了")
                     st.rerun()
         with tab2:
+            st.caption("証券口座への入出金を記録")
             with st.form("cash_form", clear_on_submit=True):
                 c_d = st.date_input("日付")
                 c_k = st.selectbox("種別", ["DEPOSIT", "WITHDRAW"], format_func=lambda x: "入金" if x=="DEPOSIT" else "出金")
@@ -223,15 +265,75 @@ with st.sidebar:
                     st.cache_data.clear()
                     st.success("完了")
                     st.rerun()
-        with tab3:
-            with st.form("trust_form", clear_on_submit=True):
-                t_d = st.date_input("日付")
-                t_a = st.number_input("現在の評価額合計", 0)
-                if st.form_submit_button("投信 更新"):
-                    supabase.table("balance").insert({"date": str(t_d), "type": "TRUST", "amount": t_a, "memo": "残高更新"}).execute()
-                    st.cache_data.clear()
-                    st.success("完了")
-                    st.rerun()
+
+# --- 5. メイン画面 ---
+page = st.session_state.page
+
+if page == "assets":
+    st.title("Asset Overview")
+    
+    total_stock_value = 0
+    total_trust_value = 0
+    stock_details = []
+    
+    for ticker, info in active_holdings.items():
+        curr, diff, pct = get_asset_info(ticker)
+        if curr is None: curr = info['total_cost']/info['qty']
+        val = curr * info['qty']
+        avg = info['total_cost']/info['qty']
+        u_pl = val - info['total_cost']
+        
+        is_trust = len(str(ticker)) == 8 and '.' not in str(ticker)
+        if is_trust:
+            total_trust_value += val
+        else:
+            total_stock_value += val
+            
+        stock_details.append({"ticker": ticker, "name": info['name'], "qty": info['qty'], "avg": avg, "curr": curr, "u_pl": u_pl, "val": val, "diff": diff, "pct": pct})
+
+    target_val = st.session_state.target_amount
+    total_assets = current_cash + total_trust_value + total_stock_value
+    
+    p_stock = max(0, min(total_stock_value / target_val, 1.0)) * 100
+    p_trust = max(0, min(total_trust_value / target_val, 1.0)) * 100
+    p_cash = max(0, min(current_cash / target_val, 1.0)) * 100
+    p_total = max(0, min(total_assets / target_val, 1.0)) * 100
+    
+    st.write(f"**目標達成率: {p_total:.1f}%** (目標: {target_val:,.0f}円)")
+    
+    st.markdown(f"""
+    <div style="position: relative; height: 32px; width: 100%; background-color: #3b3d48; border-radius: 16px; overflow: hidden; margin-bottom: 10px;">
+        <div style="display: flex; height: 100%; width: 100%;">
+            <div style="width: {p_stock}%; background-color: #ff4b4b;" title="株"></div>
+            <div style="width: {p_trust}%; background-color: #2ecc71;" title="投信"></div>
+            <div style="width: {p_cash}%; background-color: #00d1ff;" title="現金"></div>
+        </div>
+        <div style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 15px; text-shadow: 1px 1px 3px rgba(0,0,0,0.9); pointer-events: none;">
+            現在: {total_assets:,.0f} 円
+        </div>
+    </div>
+    
+    <details style="font-size:14px; color:#bdc3c7; margin-bottom:20px; background-color: #262730; padding: 12px; border-radius: 10px; border: 1px solid #3b3d48;">
+        <summary style="cursor: pointer; outline: none; font-weight: bold; display: flex; justify-content: space-between; align-items: center;">
+            <span>📊 資産の内訳を見る</span>
+            <span style="font-size: 12px; color: #e74c3c;">目標まであと: {target_val - total_assets:,.0f}円</span>
+        </summary>
+        <div style="display:flex; flex-direction: column; gap:8px; margin-top:12px; padding-top: 12px; border-top: 1px solid #3b3d48;">
+            <div style="display:flex; justify-content:space-between;">
+                <span style="color:#ff4b4b;">■ 国内株</span>
+                <span style="color:white; font-weight:bold;">{total_stock_value:,.0f} 円</span>
+            </div>
+            <div style="display:flex; justify-content:space-between;">
+                <span style="color:#2ecc71;">■ 投資信託</span>
+                <span style="color:white; font-weight:bold;">{total_trust_value:,.0f} 円</span>
+            </div>
+            <div style="display:flex; justify-content:space-between;">
+                <span style="color:#00d1ff;">■ 現金余力</span>
+                <span style="color:white; font-weight:bold;">{current_cash:,.0f} 円</span>
+            </div>
+        </div>
+    </details>
+    """, unsafe_allow_html=True)
 # --- 5. メイン画面 ---
 page = st.session_state.page
 
@@ -294,10 +396,10 @@ if page == "assets":
     </details>
     """, unsafe_allow_html=True)
 
-    c1, c2, c3, c4 = st.columns(4)
+c1, c2, c3, c4 = st.columns(4)
     c1.metric("総資産", f"{total_assets:,.0f}円")
     c2.metric("国内株", f"{total_stock_value:,.0f}円")
-    c3.metric("投資信託", f"{current_trust:,.0f}円")
+    c3.metric("投資信託", f"{total_trust_value:,.0f}円")
     c4.metric("現金余力", f"{current_cash:,.0f}円")
 
     st.subheader("保有銘柄")
@@ -527,6 +629,7 @@ elif page == "manage":
                 st.rerun()
             except Exception as e:
                 st.error(f"保存エラー: {e}")
+
 
 
 
