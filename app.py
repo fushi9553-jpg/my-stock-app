@@ -239,22 +239,43 @@ if page == "assets":
     p_stock = min(total_stock_value / target_val, 1.0) * 100
     p_trust = min(current_trust / target_val, 1.0) * 100
     p_cash = min(current_cash / target_val, 1.0) * 100
+    p_total = min(total_assets / target_val, 1.0) * 100
     
-    st.write(f"**目標達成率: {(total_assets/target_val)*100:.1f}%** (目標: {target_val:,.0f}円)")
+    st.write(f"**目標達成率: {p_total:.1f}%** (目標: {target_val:,.0f}円)")
+    
     st.markdown(f"""
-    <div style="display: flex; height: 25px; width: 100%; background-color: #3b3d48; border-radius: 12px; overflow: hidden; margin-bottom: 5px;">
-        <div style="width: {p_stock}%; background-color: #ff4b4b;" title="株"></div>
-        <div style="width: {p_trust}%; background-color: #2ecc71;" title="投信"></div>
-        <div style="width: {p_cash}%; background-color: #00d1ff;" title="現金"></div>
-    </div>
-    <div style="display:flex; justify-content:space-between; font-size:12px; color:#bdc3c7; margin-bottom:20px;">
-        <div style="display:flex; gap:10px;">
-            <span style="color:#ff4b4b;">■ 株: {total_stock_value:,.0f}</span>
-            <span style="color:#2ecc71;">■ 投信: {current_trust:,.0f}</span>
-            <span style="color:#00d1ff;">■ 現金: {current_cash:,.0f}</span>
+    <div style="position: relative; height: 32px; width: 100%; background-color: #3b3d48; border-radius: 16px; overflow: hidden; margin-bottom: 10px;">
+        <div style="display: flex; height: 100%; width: 100%;">
+            <div style="width: {p_stock}%; background-color: #ff4b4b;" title="株"></div>
+            <div style="width: {p_trust}%; background-color: #2ecc71;" title="投信"></div>
+            <div style="width: {p_cash}%; background-color: #00d1ff;" title="現金"></div>
         </div>
-        <span>あと: {target_val - total_assets:,.0f}円</span>
-    </div>""", unsafe_allow_html=True)
+        <div style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 15px; text-shadow: 1px 1px 3px rgba(0,0,0,0.9); pointer-events: none;">
+            現在: {total_assets:,.0f} 円
+        </div>
+    </div>
+    
+    <details style="font-size:14px; color:#bdc3c7; margin-bottom:20px; background-color: #262730; padding: 12px; border-radius: 10px; border: 1px solid #3b3d48;">
+        <summary style="cursor: pointer; outline: none; font-weight: bold; display: flex; justify-content: space-between; align-items: center;">
+            <span>📊 資産の内訳を見る</span>
+            <span style="font-size: 12px; color: #e74c3c;">目標まであと: {target_val - total_assets:,.0f}円</span>
+        </summary>
+        <div style="display:flex; flex-direction: column; gap:8px; margin-top:12px; padding-top: 12px; border-top: 1px solid #3b3d48;">
+            <div style="display:flex; justify-content:space-between;">
+                <span style="color:#ff4b4b;">■ 国内株</span>
+                <span style="color:white; font-weight:bold;">{total_stock_value:,.0f} 円</span>
+            </div>
+            <div style="display:flex; justify-content:space-between;">
+                <span style="color:#2ecc71;">■ 投資信託</span>
+                <span style="color:white; font-weight:bold;">{current_trust:,.0f} 円</span>
+            </div>
+            <div style="display:flex; justify-content:space-between;">
+                <span style="color:#00d1ff;">■ 現金余力</span>
+                <span style="color:white; font-weight:bold;">{current_cash:,.0f} 円</span>
+            </div>
+        </div>
+    </details>
+    """, unsafe_allow_html=True)
 
     # ★★★ ここでカードを4つに分割 ★★★
     c1, c2, c3, c4 = st.columns(4)
@@ -486,6 +507,7 @@ elif page == "manage":
                 st.rerun()
             except Exception as e:
                 st.error(f"保存エラー: {e}")
+
 
 
 
