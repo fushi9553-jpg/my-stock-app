@@ -171,7 +171,6 @@ def get_asset_info(ticker):
         except:
             return None, 0, 0
     else:
-        # それ以外は個別株と判定してyfinanceを使用
         try:
             s = yf.Ticker(ticker_str)
             hist = s.history(period="2d")
@@ -629,6 +628,7 @@ elif page == "manage":
                 st.rerun()
             except Exception as e:
                 st.error(f"保存エラー: {e}")
+
 
 
 
