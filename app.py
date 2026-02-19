@@ -124,7 +124,22 @@ def process_data(data):
     return active_holdings, history, stats
 
 active_holdings, history_data, global_stats = process_data(df_trades)
-current_cash, current_trust = calculate_assets(df_balance)
+base_cash, current_trust = calculate_assets(df_balance)
+
+# ★★★ 修正ポイント：株の売買による現金の増減を計算して反映 ★★★
+if not df_trades.empty:
+    # エラー防止のため数値型に変換
+    df_trades['price'] = pd.to_numeric(df_trades['price'], errors='coerce').fillna(0)
+    df_trades['qty'] = pd.to_numeric(df_trades['qty'], errors='coerce').fillna(0)
+    
+    # IN（買い）で使った金額、OUT（売り）で得た金額を計算
+    spent = df_trades[df_trades['type'] == 'IN'].apply(lambda r: r['price'] * r['qty'], axis=1).sum()
+    gained = df_trades[df_trades['type'] == 'OUT'].apply(lambda r: r['price'] * r['qty'], axis=1).sum()
+    
+    # 最終的な現金余力 ＝ (入金-出金) － 買った株の代金 ＋ 売った株の代金
+    current_cash = base_cash - spent + gained
+else:
+    current_cash = base_cash
 
 @st.cache_data(ttl=600)
 def get_stock_info(ticker):
@@ -510,6 +525,7 @@ elif page == "manage":
                 st.rerun()
             except Exception as e:
                 st.error(f"保存エラー: {e}")
+
 
 
 
