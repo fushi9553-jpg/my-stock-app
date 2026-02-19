@@ -5,7 +5,27 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 from datetime import datetime
+import requests
+from bs4 import BeautifulSoup
 
+# --- 投資信託の基準価額をスクレイピングする関数 ---
+@st.cache_data(ttl=3600)  # 毎回通信すると重い＆サイトに負荷がかかるため、1時間に1回だけ取得
+def get_trust_price(fund_code):
+    # 日本の金融サイト（Yahooファイナンス等）の専用ページを指定
+    target = f"https://finance.yahoo.co.jp/quote/{fund_code}"
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    
+    try:
+        # サイトにアクセスしてHTMLを取得
+        res = requests.get(target, headers=headers)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        
+        # ！！！ここにウェブサイトから「基準価額」の数字だけをピンポイントで抜き出す処理を書きます！！！
+        # （銘柄によって取得元のURLやHTMLの構造が変わるため、あとで完成させます）
+        
+        return 0 # 仮置き
+    except Exception as e:
+        return None
 # 1. ページ設定
 st.set_page_config(page_title="My Portfolio App", layout="wide", initial_sidebar_state="collapsed")
 
@@ -494,6 +514,7 @@ elif page == "manage":
                 st.rerun()
             except Exception as e:
                 st.error(f"保存エラー: {e}")
+
 
 
 
