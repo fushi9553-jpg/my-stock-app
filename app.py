@@ -179,8 +179,8 @@ def get_asset_info(ticker):
             prev = hist['Close'].iloc[0] if len(hist)>1 else curr
             return curr, curr-prev, ((curr-prev)/prev)*100
         except: return None, 0, 0
-    else:
-        current_cash = base_cash
+else:
+　　 current_cash = base_cash
 
 @st.cache_data(ttl=600)
 def get_stock_info(ticker):
@@ -628,6 +628,7 @@ elif page == "manage":
                 st.rerun()
             except Exception as e:
                 st.error(f"保存エラー: {e}")
+
 
 
 
