@@ -342,13 +342,57 @@ elif page == "analysis":
             if not data.empty:
                 data = data.reset_index()
                 if isinstance(data.columns, pd.MultiIndex): data.columns = data.columns.get_level_values(0)
-                fig = go.Figure(data=[go.Candlestick(x=data['Date'], open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'], increasing_line_color='#ff4b4b', decreasing_line_color='#00d1ff', name="Price")])
+# 25日移動平均線の計算を追加
+                data['25MA'] = data['Close'].rolling(window=25).mean()
+
+                fig = go.Figure()
+                
+                # ローソク足（TradingViewカラー）
+                fig.add_trace(go.Candlestick(
+                    x=data['Date'], open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'], 
+                    increasing_line_color='#089981', decreasing_line_color='#F23645', name="Price"
+                ))
+                
+                # 25日移動平均線（青色）
+                fig.add_trace(go.Scatter(
+                    x=data['Date'], y=data['25MA'], mode='lines', 
+                    name='25日移動平均', line=dict(color='#2962FF', width=1.5), hoverinfo='skip'
+                ))
+
+                # 売買マーカーの追加（元のロジックを維持）
                 t_d = df_trades[df_trades['ticker'] == tk]
                 for _, r in t_d.iterrows():
-                    color = "#ff4b4b" if r['type']=="IN" else "#00d1ff"
+                    color = "#089981" if r['type']=="IN" else "#F23645" # マーカーの色も合わせる
                     marker = "triangle-up" if r['type']=="IN" else "triangle-down"
-                    fig.add_trace(go.Scatter(x=[r['date']], y=[r['price']], mode="markers", marker=dict(color=color, size=14, symbol=marker, line=dict(color='white', width=1)), name=r['type'], hovertext=f"{r['type']}<br>{r['date']}<br>{r['price']}円"))
-                fig.update_layout(template="plotly_dark", height=500, hovermode="x unified", dragmode="pan", xaxis=dict(rangeslider=dict(visible=True), type='date', rangebreaks=[dict(bounds=["sat", "mon"])], tickformat="%Y/%m/%d", spikethickness=1, showspikes=True), yaxis=dict(fixedrange=False, tickformat=",", side="right", showspikes=True, spikethickness=1), margin=dict(l=10, r=50, t=10, b=10), modebar=dict(remove=['zoom', 'select', 'lasso', 'autoScale']))
+                    fig.add_trace(go.Scatter(
+                        x=[r['date']], y=[r['price']], mode="markers", 
+                        marker=dict(color=color, size=14, symbol=marker, line=dict(color='white', width=1)), 
+                        name=r['type'], hovertext=f"{r['type']}<br>{r['date']}<br>{r['price']}円"
+                    ))
+                
+                # TradingView風のレイアウト設定
+                fig.update_layout(
+                    template="plotly_dark", 
+                    plot_bgcolor='#131722',  # 背景色
+                    paper_bgcolor='#131722',
+                    height=500, 
+                    hovermode="x unified", 
+                    dragmode="pan", 
+                    xaxis=dict(
+                        rangeslider=dict(visible=False), # 下のスライダーを消して広く使う
+                        type='date', rangebreaks=[dict(bounds=["sat", "mon"])], 
+                        tickformat="%Y/%m/%d", spikethickness=1, showspikes=True,
+                        showgrid=True, gridcolor='#2B2B43' # 暗めのグリッド線
+                    ), 
+                    yaxis=dict(
+                        fixedrange=False, tickformat=",", side="right", 
+                        showspikes=True, spikethickness=1,
+                        showgrid=True, gridcolor='#2B2B43'
+                    ), 
+                    margin=dict(l=10, r=50, t=10, b=10), 
+                    modebar=dict(remove=['zoom', 'select', 'lasso', 'autoScale']),
+                    showlegend=False # 凡例を隠してスッキリさせる
+                )
                 fig.update_xaxes(fixedrange=False)
                 fig.update_yaxes(fixedrange=False)
                 st.plotly_chart(fig, use_container_width=True)
@@ -440,6 +484,7 @@ elif page == "manage":
                 st.rerun()
             except Exception as e:
                 st.error(f"保存エラー: {e}")
+
 
 
 
